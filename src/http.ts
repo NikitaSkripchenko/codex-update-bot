@@ -1,10 +1,15 @@
 import { getErrorMessage, isAuthorizedBearer, jsonResponse } from "./env";
+import { dashboardHtmlResponse, dashboardJsonResponse, dashboardReevaluateResponse } from "./dashboard";
 import { runMonitor } from "./monitor";
 import { readMonitorState } from "./state";
 import { getSubscriptionStats } from "./subscriptions";
 import { setTelegramCommands } from "./telegram";
 import { getTweetSourceDiagnostics } from "./tweets";
 import type { Env } from "./types";
+
+const LOCAL_DASHBOARD_HOSTS = new Set(["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"]);
+
+const isLocalDashboardRequest = (url: URL): boolean => LOCAL_DASHBOARD_HOSTS.has(url.hostname);
 
 const publicHealth = async (env: Env): Promise<Response> => {
   const state = await readMonitorState(env.MONITOR_STATE);
@@ -25,6 +30,28 @@ export const handleHttpRequest = async (request: Request, env: Env): Promise<Res
 
   if (request.method === "GET" && url.pathname === "/health") {
     return publicHealth(env);
+  }
+
+  if (request.method === "GET" && url.pathname === "/dashboard" && isLocalDashboardRequest(url)) {
+    return dashboardHtmlResponse(env);
+  }
+
+  if (request.method === "GET" && url.pathname === "/dashboard.json" && isLocalDashboardRequest(url)) {
+    return dashboardJsonResponse(env);
+  }
+
+  if (request.method === "POST" && url.pathname === "/dashboard/re-evaluate" && isLocalDashboardRequest(url)) {
+    try {
+      return await dashboardReevaluateResponse(request, env);
+    } catch (error) {
+      return jsonResponse(
+        {
+          ok: false,
+          error: getErrorMessage(error),
+        },
+        { status: 502 },
+      );
+    }
   }
 
   if (request.method === "POST" && url.pathname === "/run") {
@@ -63,7 +90,7 @@ export const handleHttpRequest = async (request: Request, env: Env): Promise<Res
   }
 
   if (request.method === "GET" && url.pathname === "/") {
-    return new Response("Codex limit Telegram bot is running. See /health.", {
+    return new Response("Codex limit Telegram bot is running. See /health. Local dashboard is available during wrangler dev at /dashboard.", {
       headers: {
         "content-type": "text/plain; charset=utf-8",
       },

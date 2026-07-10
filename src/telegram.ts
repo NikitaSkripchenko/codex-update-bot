@@ -3,12 +3,14 @@ import type { Classification, Env, MonitorState, Tweet } from "./types";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const SAFE_MESSAGE_LIMIT = 3900;
+const STATUS_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_TODAY_STATUS_DECISIONS = 20;
 
 export const TELEGRAM_COMMANDS = [
-  { command: "status", description: "Show the latest cached tweet and monitor status" },
-  { command: "subscribe", description: "Receive reset alerts" },
-  { command: "unsubscribe", description: "Stop reset alerts" },
-  { command: "help", description: "Show bot help" },
+  { command: "status", description: "See today's results and the latest cached post" },
+  { command: "subscribe", description: "Get confirmed reset alerts in this chat" },
+  { command: "unsubscribe", description: "Stop reset alerts in this chat" },
+  { command: "help", description: "See how the bot works" },
 ];
 
 export type TelegramMessageOptions = {
@@ -44,50 +46,101 @@ export const truncateForTelegram = (value: string, maxLength = SAFE_MESSAGE_LIMI
   return `${value.slice(0, maxLength - 3).trimEnd()}...`;
 };
 
-const formatVerdict = (classification: Classification): string => {
-  if (classification.verdict === "reset_confirmed") {
-    return "RESET CONFIRMED";
+const formatVerdictText = (verdict: Classification["verdict"]): string => {
+  if (verdict === "reset_confirmed") {
+    return "Reset confirmed";
   }
 
-  if (classification.verdict === "uncertain") {
-    return "UNCERTAIN";
+  if (verdict === "uncertain") {
+    return "Uncertain";
   }
 
-  return "NOT RESET";
+  return "Not reset";
+};
+
+const formatVerdict = (classification: Classification): string => formatVerdictText(classification.verdict);
+
+const formatConfidence = (confidence: number): string => `${Math.round(confidence * 100)}%`;
+
+const formatDeliveryMode = (decision: MonitorState["recentDecisions"][number]): string => {
+  if (decision.deliveryMode === "direct") {
+    return `sent to ${decision.deliveredCount ?? 0} chat${decision.deliveredCount === 1 ? "" : "s"}`;
+  }
+
+  if (decision.deliveryMode === "queued") {
+    return `queued for ${decision.queuedCount ?? 0} subscriber${decision.queuedCount === 1 ? "" : "s"}`;
+  }
+
+  return "cached only; no alert sent";
 };
 
 export const formatAlertMessage = (tweet: Tweet, classification: Classification): string =>
   truncateForTelegram(
     [
-      `@${tweet.authorUsername} posted`,
+      "Codex reset alert",
       "",
       `Verdict: ${formatVerdict(classification)}`,
-      `Confidence: ${classification.confidence.toFixed(2)}`,
-      `Reason: ${classification.rationale}`,
+      `Confidence: ${formatConfidence(classification.confidence)}`,
+      `Why: ${classification.rationale}`,
       "",
+      "What to do: Open Codex or ChatGPT and try the blocked task again.",
+      `Source: @${tweet.authorUsername}`,
       `Post: ${tweet.url}`,
       "",
-      "Text:",
+      "Original post:",
       truncateForTelegram(tweet.fullText, 900),
     ].join("\n"),
   );
 
-export const formatStatusMessage = (state: MonitorState): string => {
-  const latest = state.recentDecisions[0];
+const getDecisionTimestamp = (decision: MonitorState["recentDecisions"][number]): number | null => {
+  const timestamp = new Date(decision.tweetCreatedAt).valueOf();
+  return Number.isFinite(timestamp) ? timestamp : null;
+};
+
+const getLatestDecision = (state: MonitorState): MonitorState["recentDecisions"][number] | undefined =>
+  state.recentDecisions.find((decision) => decision.tweetId === state.lastSeenTweetId) ||
+  [...state.recentDecisions].sort((left, right) => (getDecisionTimestamp(right) || 0) - (getDecisionTimestamp(left) || 0))[0];
+
+const formatTodayDecision = (decision: MonitorState["recentDecisions"][number]): string =>
+  `- ${formatVerdictText(decision.verdict)} (${formatConfidence(decision.confidence)}) | ${decision.tweetUrl}`;
+
+export const formatStatusMessage = (state: MonitorState, now = new Date()): string => {
+  const latest = getLatestDecision(state);
+  const cutoff = now.valueOf() - STATUS_WINDOW_MS;
+  const todayDecisions = state.recentDecisions
+    .filter((decision) => {
+      const timestamp = getDecisionTimestamp(decision);
+      return timestamp !== null && timestamp >= cutoff && timestamp <= now.valueOf();
+    })
+    .sort((left, right) => (getDecisionTimestamp(right) || 0) - (getDecisionTimestamp(left) || 0));
+  const visibleTodayDecisions = todayDecisions.slice(0, MAX_TODAY_STATUS_DECISIONS);
+  const todaySummary = visibleTodayDecisions.length > 0
+    ? visibleTodayDecisions.map(formatTodayDecision)
+    : ["No cached posts in the last 24 hours."];
 
   return truncateForTelegram(
     [
-      "Codex limit monitor status",
+      "Codex limit monitor",
       "",
-      `Last check: ${state.lastCheckAt || "never"}`,
-      `Last error: ${state.lastError ? "yes" : "no"}`,
+      `Monitor: ${state.lastError ? "needs attention" : "healthy"}`,
+      `Last checked: ${state.lastCheckAt || "never"}`,
+      state.lastError ? `Last error: ${truncateForTelegram(state.lastError, 220)}` : null,
+      "Alerts: confirmed resets only",
       "",
-      latest ? `Latest post: ${latest.tweetUrl}` : `Latest post: ${state.lastSeenTweetUrl || "none"}`,
-      latest ? `Tweet posted: ${latest.tweetCreatedAt || "unknown"}` : null,
-      latest ? `Verdict: ${latest.verdict} (${latest.confidence.toFixed(2)})` : "Verdict: none",
-      latest ? `Reason: ${latest.rationale}` : null,
+      "Today's results (last 24 hours):",
+      ...todaySummary,
+      todayDecisions.length > visibleTodayDecisions.length
+        ? `Showing the newest ${MAX_TODAY_STATUS_DECISIONS} of ${todayDecisions.length} results.`
+        : null,
+      "",
+      "Latest monitored post:",
+      latest ? `Post: ${latest.tweetUrl}` : `Post: ${state.lastSeenTweetUrl || "none"}`,
+      latest ? `Posted: ${latest.tweetCreatedAt || "unknown"}` : null,
+      latest ? `Verdict: ${formatVerdictText(latest.verdict)} (${formatConfidence(latest.confidence)})` : "Verdict: none yet",
+      latest ? `Delivery: ${formatDeliveryMode(latest)}` : null,
+      latest ? `Why: ${latest.rationale}` : null,
       latest?.tweetText ? "" : null,
-      latest?.tweetText ? "Text:" : null,
+      latest?.tweetText ? "Original post:" : null,
       latest?.tweetText ? truncateForTelegram(latest.tweetText, 900) : null,
     ]
       .filter((line): line is string => line !== null)
@@ -95,11 +148,33 @@ export const formatStatusMessage = (state: MonitorState): string => {
   );
 };
 
+export const formatHelpMessage = (publicSubscriptionsEnabled: boolean): string =>
+  truncateForTelegram(
+    [
+      "Codex reset alert bot",
+      "",
+      "Use it when you want to know whether a monitored X post likely means Codex or ChatGPT limits reset.",
+      "",
+      "How it behaves:",
+      "- I check configured X accounts on a schedule.",
+      "- I only send alerts for confirmed resets.",
+      "- /status shows cached results from the last 24 hours, then the latest monitored post. It never triggers a new monitor run.",
+      "",
+      "Commands:",
+      "/status - show today's results and the latest cached post",
+      publicSubscriptionsEnabled
+        ? "/subscribe - get future confirmed reset alerts in this chat"
+        : "/subscribe - unavailable until public subscriptions are enabled",
+      "/unsubscribe - stop alerts in this chat",
+      "/help - show this guide",
+    ].join("\n"),
+  );
+
 export const getTelegramCommandReplyMarkup = (): unknown => ({
   keyboard: [["/status"], ["/subscribe", "/unsubscribe"], ["/help"]],
   resize_keyboard: true,
   one_time_keyboard: false,
-  input_field_placeholder: "Choose a command",
+  input_field_placeholder: "Tap a command or type /status",
 });
 
 const isPermanentTelegramError = (status: number, description: string): boolean => {

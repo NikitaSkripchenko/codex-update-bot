@@ -1,4 +1,12 @@
-import { formatAlertMessage, formatStatusMessage, parseTelegramChatIds, setTelegramCommands, truncateForTelegram } from "../src/telegram";
+import {
+  formatAlertMessage,
+  formatHelpMessage,
+  formatStatusMessage,
+  getTelegramCommandReplyMarkup,
+  parseTelegramChatIds,
+  setTelegramCommands,
+  truncateForTelegram,
+} from "../src/telegram";
 
 describe("telegram", () => {
   it("parses comma-separated chat IDs", () => {
@@ -23,7 +31,9 @@ describe("telegram", () => {
       },
     );
 
-    expect(text).toContain("RESET CONFIRMED");
+    expect(text).toContain("Codex reset alert");
+    expect(text).toContain("Verdict: Reset confirmed");
+    expect(text).toContain("What to do: Open Codex or ChatGPT and try the blocked task again.");
     expect(text.length).toBeLessThanOrEqual(3900);
   });
 
@@ -31,7 +41,7 @@ describe("telegram", () => {
     expect(truncateForTelegram("abcdef", 5)).toBe("ab...");
   });
 
-  it("includes latest cached tweet text in status", () => {
+  it("includes the latest monitored tweet text in status", () => {
     const text = formatStatusMessage({
       lastSeenTweetId: "1",
       lastSeenTweetUrl: "https://x.com/thsottiaux/status/1",
@@ -52,8 +62,67 @@ describe("telegram", () => {
       ],
     });
 
-    expect(text).toContain("Latest post: https://x.com/thsottiaux/status/1");
+    expect(text).toContain("Monitor: healthy");
+    expect(text).toContain("Latest monitored post:");
+    expect(text).toContain("Post: https://x.com/thsottiaux/status/1");
+    expect(text).toContain("Delivery: cached only; no alert sent");
     expect(text).toContain("latest cached tweet");
+  });
+
+  it("limits status results to the last 24 hours and keeps the latest monitored post", () => {
+    const text = formatStatusMessage(
+      {
+        lastSeenTweetId: "newest",
+        lastSeenTweetUrl: "https://x.com/thsottiaux/status/newest",
+        lastCheckAt: "2026-07-10T12:00:00.000Z",
+        lastError: null,
+        recentDecisions: [
+          {
+            alertedAt: "2026-07-09T12:00:00.000Z",
+            confidence: 0.8,
+            deliveryMode: "cached",
+            rationale: "old result",
+            tweetCreatedAt: "2026-07-08T11:00:00.000Z",
+            tweetId: "old",
+            tweetText: "old cached tweet",
+            tweetUrl: "https://x.com/thsottiaux/status/old",
+            verdict: "not_reset",
+          },
+          {
+            alertedAt: "2026-07-10T12:00:00.000Z",
+            confidence: 0.95,
+            deliveryMode: "cached",
+            rationale: "new result",
+            tweetCreatedAt: "2026-07-10T11:00:00.000Z",
+            tweetId: "newest",
+            tweetText: "newest cached tweet",
+            tweetUrl: "https://x.com/thsottiaux/status/newest",
+            verdict: "reset_confirmed",
+          },
+        ],
+      },
+      new Date("2026-07-10T12:00:00.000Z"),
+    );
+
+    expect(text).toContain("Today's results (last 24 hours):");
+    expect(text).toContain("https://x.com/thsottiaux/status/newest");
+    expect(text).not.toContain("https://x.com/thsottiaux/status/old");
+    expect(text).toContain("newest cached tweet");
+  });
+
+  it("formats help as predictable chat guidance", () => {
+    const text = formatHelpMessage(false);
+
+    expect(text).toContain("Codex reset alert bot");
+    expect(text).toContain("/status shows cached results from the last 24 hours");
+    expect(text).toContain("/subscribe - unavailable until public subscriptions are enabled");
+  });
+
+  it("keeps Telegram command keyboard action-oriented", () => {
+    expect(getTelegramCommandReplyMarkup()).toMatchObject({
+      input_field_placeholder: "Tap a command or type /status",
+      keyboard: [["/status"], ["/subscribe", "/unsubscribe"], ["/help"]],
+    });
   });
 
   it("sets Telegram UI commands", async () => {

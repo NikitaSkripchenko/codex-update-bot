@@ -33,7 +33,7 @@ describe("monitor", () => {
     const state = await readMonitorState(env.MONITOR_STATE);
     expect(outcome.outcome).toBe("seeded");
     expect(state.lastSeenTweetId).toBe("2");
-    expect(state.recentDecisions[0]?.tweetId).toBe("2");
+    expect(state.recentDecisions.map((decision) => decision.tweetId)).toEqual(["2", "1"]);
     expect(state.recentDecisions[0]?.deliveryMode).toBe("cached");
     expect(dispatched).toEqual([]);
   });
@@ -203,5 +203,36 @@ describe("monitor", () => {
     expect(dispatched).toEqual([]);
     expect(state.lastSeenTweetId).toBe("2074705681920520526");
     expect(state.recentDecisions[0]?.deliveryMode).toBe("cached");
+  });
+
+  it("backfills missing cached decisions for an already-seeded dashboard without dispatching", async () => {
+    const env = createEnv();
+    await writeMonitorState(env.MONITOR_STATE, {
+      lastSeenTweetId: "3",
+      lastSeenTweetUrl: "https://x.com/thsottiaux/status/3",
+      lastCheckAt: "2026-07-08T10:17:00.000Z",
+      lastError: null,
+      recentDecisions: [],
+    });
+
+    const classified: string[] = [];
+    const dispatched: string[] = [];
+    const outcome = await runMonitor(env, {
+      fetchTweets: async () => [createTweet("1"), createTweet("2"), createTweet("3")],
+      classify: async (_env, tweet) => {
+        classified.push(tweet.id);
+        return { verdict: "not_reset", confidence: 0.8, rationale: "cached" };
+      },
+      dispatch: async (_env, tweet) => {
+        dispatched.push(tweet.id);
+        return { mode: "direct", deliveredCount: 1, permanentFailureCount: 0 };
+      },
+    });
+
+    const state = await readMonitorState(env.MONITOR_STATE);
+    expect(outcome).toMatchObject({ outcome: "no_new_tweets", processedCount: 0, lastSeenTweetId: "3" });
+    expect(classified).toEqual(["1", "2", "3"]);
+    expect(dispatched).toEqual([]);
+    expect(state.recentDecisions.map((decision) => decision.tweetId)).toEqual(["3", "2", "1"]);
   });
 });

@@ -17,6 +17,7 @@ export type Classification = {
   verdict: ClassificationVerdict;
   confidence: number;
   rationale: string;
+  model?: string;
   usage?: {
     inputTokens: number;
     outputTokens: number;
@@ -33,6 +34,8 @@ export type MonitorDecision = {
   verdict: ClassificationVerdict;
   confidence: number;
   rationale: string;
+  model?: string;
+  usage?: Classification["usage"];
   alertedAt: string;
   deliveryMode: "cached" | "direct" | "queued";
   deliveredCount?: number;

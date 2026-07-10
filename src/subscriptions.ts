@@ -12,6 +12,13 @@ type DeliveryRecord = {
   claimed_until: string | null;
 };
 
+type SubscriptionRecord = {
+  status: string;
+};
+
+export type SubscribeResult = "already_active" | "created" | "reactivated";
+export type UnsubscribeResult = "already_inactive" | "unsubscribed";
+
 const requireDb = (env: Env): D1Database => {
   if (!env.SUBSCRIPTIONS_DB) {
     throw new Error("SUBSCRIPTIONS_DB binding is required when public subscriptions are enabled");
@@ -28,10 +35,24 @@ const getRowsWritten = (result: D1RunResult): number => {
 
 const nowIso = (): string => new Date().toISOString();
 
-export const upsertSubscription = async (env: Env, chatId: string, chatType: string): Promise<void> => {
+export const upsertSubscription = async (env: Env, chatId: string, chatType: string): Promise<SubscribeResult> => {
+  const db = requireDb(env);
+  const existing = await db
+    .prepare(
+      `select status
+       from telegram_subscriptions
+       where chat_id = ?`,
+    )
+    .bind(chatId)
+    .first<SubscriptionRecord>();
+
+  if (existing?.status === "active") {
+    return "already_active";
+  }
+
   const now = nowIso();
 
-  await requireDb(env)
+  await db
     .prepare(
       `insert into telegram_subscriptions (chat_id, chat_type, status, subscribed_at, unsubscribed_at, failure_count, last_delivery_error, last_delivery_error_at)
        values (?, ?, 'active', ?, null, 0, null, null)
@@ -46,10 +67,26 @@ export const upsertSubscription = async (env: Env, chatId: string, chatType: str
     )
     .bind(chatId, chatType, now)
     .run();
+
+  return existing ? "reactivated" : "created";
 };
 
-export const unsubscribeChat = async (env: Env, chatId: string): Promise<void> => {
-  await requireDb(env)
+export const unsubscribeChat = async (env: Env, chatId: string): Promise<UnsubscribeResult> => {
+  const db = requireDb(env);
+  const existing = await db
+    .prepare(
+      `select status
+       from telegram_subscriptions
+       where chat_id = ?`,
+    )
+    .bind(chatId)
+    .first<SubscriptionRecord>();
+
+  if (!existing || existing.status === "unsubscribed") {
+    return "already_inactive";
+  }
+
+  await db
     .prepare(
       `update telegram_subscriptions
        set status = 'unsubscribed', unsubscribed_at = ?
@@ -57,6 +94,8 @@ export const unsubscribeChat = async (env: Env, chatId: string): Promise<void> =
     )
     .bind(nowIso(), chatId)
     .run();
+
+  return "unsubscribed";
 };
 
 export const listActiveChatIds = async (env: Env, limit = 500, offset = 0): Promise<string[]> => {

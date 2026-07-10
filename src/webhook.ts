@@ -3,6 +3,7 @@ import { checkRateLimit } from "./rate-limit";
 import { readMonitorState } from "./state";
 import { unsubscribeChat, upsertSubscription } from "./subscriptions";
 import {
+  formatHelpMessage,
   formatStatusMessage,
   editTelegramMessage,
   getTelegramCommandReplyMarkup,
@@ -121,25 +122,12 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
   await safeTyping(env, chatId);
 
   if (command === "/start" || command === "/help") {
-    await safeReply(
-      env,
-      chatId,
-      [
-        "Codex limit tweet monitor",
-        "",
-        "I silently cache monitored tweets and only send subscriber alerts when a reset is confirmed. Use /status to see the latest cached tweet.",
-        "",
-        "Commands:",
-        "/status - show latest cached tweet and monitor status",
-        "/subscribe - receive future reset alerts when public subscriptions are enabled",
-        "/unsubscribe - stop receiving alerts",
-      ].join("\n"),
-    );
+    await safeReply(env, chatId, formatHelpMessage(getBooleanEnv(env.PUBLIC_SUBSCRIPTIONS_ENABLED)));
     return;
   }
 
   if (command === "/status" || command === "/last") {
-    await sendProgressThenFinal(env, chatId, "Checking cached monitor status...", async () => {
+    await sendProgressThenFinal(env, chatId, "Checking the cached monitor status...", async () => {
       const state = await readMonitorState(env.MONITOR_STATE);
       return formatStatusMessage(state);
     });
@@ -149,11 +137,17 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
   if (command === "/subscribe") {
     await sendProgressThenFinal(env, chatId, "Subscribing this chat...", async () => {
       if (!getBooleanEnv(env.PUBLIC_SUBSCRIPTIONS_ENABLED)) {
-        return "Public subscriptions are not enabled for this bot yet.";
+        return [
+          "Subscriptions are not open yet.",
+          "",
+          "Nothing changed for this chat. You can still use /status to see today's cached results and the latest post.",
+        ].join("\n");
       }
 
-      await upsertSubscription(env, chatId, chatType);
-      return "Subscribed. You will receive future reset alerts.";
+      const result = await upsertSubscription(env, chatId, chatType);
+      return result === "already_active"
+        ? "Already subscribed. This chat will receive future confirmed reset alerts."
+        : "Subscribed. This chat will receive future confirmed reset alerts.";
     });
     return;
   }
@@ -161,11 +155,17 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
   if (command === "/unsubscribe") {
     await sendProgressThenFinal(env, chatId, "Unsubscribing this chat...", async () => {
       if (!getBooleanEnv(env.PUBLIC_SUBSCRIPTIONS_ENABLED)) {
-        return "Public subscriptions are not enabled for this bot yet.";
+        return [
+          "Subscriptions are not open yet.",
+          "",
+          "Nothing changed for this chat. You can still use /status to see today's cached results and the latest post.",
+        ].join("\n");
       }
 
-      await unsubscribeChat(env, chatId);
-      return "Unsubscribed.";
+      const result = await unsubscribeChat(env, chatId);
+      return result === "already_inactive"
+        ? "Already unsubscribed. This chat is not receiving reset alerts."
+        : "Unsubscribed. This chat will no longer receive reset alerts.";
     });
     return;
   }
@@ -178,7 +178,10 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
         ? "Manual runs must use authenticated HTTP POST /run. Telegram commands cannot trigger expensive monitor runs."
         : "Manual runs are admin-only.",
     );
+    return;
   }
+
+  await safeReply(env, chatId, `I do not know ${command}.\n\nTry /status for today's cached results and the latest post, or /help for every command.`);
 };
 
 export const handleTelegramWebhook = async (request: Request, env: Env): Promise<Response> => {

@@ -5,42 +5,41 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 [vars]
-OPENROUTER_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
+OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 OPENROUTER_APP_NAME = "Codex Limit Telegram Bot"
 TARGET_USERNAME = "thsottiaux"
 TARGET_USERNAMES = "thsottiaux,sama"
 NITTER_BASE_URL = "https://nt.vern.cc,https://nitter.net"
 POLL_LOOKBACK_HOURS = "24"
 RECENT_DECISION_LIMIT = "50"
-PUBLIC_SUBSCRIPTIONS_ENABLED = "false"
+PUBLIC_SUBSCRIPTIONS_ENABLED = "true"
 TELEGRAM_SEND_DELAY_MS = "40"
 
 [[kv_namespaces]]
 binding = "MONITOR_STATE"
-id = "<production-kv-namespace-id>"
-preview_id = "<preview-kv-namespace-id>"
+id = "f5f9dc86e75342e9a158e8d7c5478f7d"
+preview_id = "2d6761322ab24d2896a854d0f2d9a672"
 
-# Public subscription mode only. Enable after creating D1, Queue, and Durable Object resources.
-# [[d1_databases]]
-# binding = "SUBSCRIPTIONS_DB"
-# database_name = "codex-limit-telegram-subscriptions"
-# database_id = "<production-d1-database-id>"
+[[d1_databases]]
+binding = "SUBSCRIPTIONS_DB"
+database_name = "codex-limit-telegram-subscriptions"
+database_id = "191e50b4-7ffc-4ea3-9876-5ccd4ea0e4c5"
 
-# [[queues.producers]]
-# binding = "TELEGRAM_DELIVERY_QUEUE"
-# queue = "codex-limit-telegram-delivery"
+[[queues.producers]]
+binding = "TELEGRAM_DELIVERY_QUEUE"
+queue = "codex-limit-telegram-delivery"
 
-# [[queues.consumers]]
-# queue = "codex-limit-telegram-delivery"
-# max_batch_size = 10
+[[queues.consumers]]
+queue = "codex-limit-telegram-delivery"
+max_batch_size = 10
 
-# [[durable_objects.bindings]]
-# name = "RATE_LIMITER"
-# class_name = "RateLimiter"
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
 
-# [[migrations]]
-# tag = "v1"
-# new_sqlite_classes = ["RateLimiter"]
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimiter"]

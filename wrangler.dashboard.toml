@@ -1,0 +1,17 @@
+name = "codex-limit-dashboard"
+main = "src/index.ts"
+compatibility_date = "2026-07-07"
+compatibility_flags = ["nodejs_compat"]
+
+# This config intentionally omits preview_id so local Wrangler requests the
+# production MONITOR_STATE namespace through the remote binding.
+[[kv_namespaces]]
+binding = "MONITOR_STATE"
+id = "f5f9dc86e75342e9a158e8d7c5478f7d"
+remote = true
+
+[[d1_databases]]
+binding = "SUBSCRIPTIONS_DB"
+database_name = "codex-limit-telegram-subscriptions"
+database_id = "191e50b4-7ffc-4ea3-9876-5ccd4ea0e4c5"
+remote = true

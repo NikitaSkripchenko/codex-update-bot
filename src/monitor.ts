@@ -64,6 +64,8 @@ const createDecision = (
   verdict: classification.verdict,
   confidence: classification.confidence,
   rationale: classification.rationale,
+  model: classification.model,
+  usage: classification.usage,
   alertedAt: new Date().toISOString(),
   deliveryMode: dispatchResult.mode,
   deliveredCount: dispatchResult.mode === "direct" ? dispatchResult.deliveredCount : undefined,
@@ -81,6 +83,8 @@ const createCachedDecision = (
   verdict: classification.verdict,
   confidence: classification.confidence,
   rationale: classification.rationale,
+  model: classification.model,
+  usage: classification.usage,
   alertedAt: new Date().toISOString(),
   deliveryMode: "cached",
 });
@@ -94,6 +98,29 @@ const shouldRefreshCachedDecision = (decision: MonitorState["recentDecisions"][n
 };
 
 const shouldDispatchAlert = (classification: Classification): boolean => classification.verdict === "reset_confirmed";
+
+const appendMissingCachedDecisions = async (
+  env: Env,
+  state: MonitorState,
+  tweets: Tweet[],
+  classify: (env: Env, tweet: Tweet) => Promise<Classification>,
+  limit: number,
+): Promise<MonitorState> => {
+  let nextState = state;
+  const cachedTweetIds = new Set(state.recentDecisions.map((decision) => decision.tweetId));
+
+  for (const tweet of tweets.slice(-limit)) {
+    if (cachedTweetIds.has(tweet.id)) {
+      continue;
+    }
+
+    const classification = await classify(env, tweet);
+    nextState = appendRecentDecision(nextState, createCachedDecision(tweet, classification), limit);
+    cachedTweetIds.add(tweet.id);
+  }
+
+  return nextState;
+};
 
 const isValidTweetId = (value: string | null): boolean => typeof value === "string" && /^\d+$/.test(value);
 
@@ -201,18 +228,18 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
     }
 
     if (!state.lastSeenTweetId) {
-      const classification = await classify(env, newestTweet);
-      state = appendRecentDecision(
-        {
-          ...state,
-          lastSeenTweetId: newestTweet.id,
-          lastSeenTweetUrl: newestTweet.url,
-          lastCheckAt: new Date().toISOString(),
-          lastError: null,
-        },
-        createCachedDecision(newestTweet, classification),
-        getNumberEnv(env.RECENT_DECISION_LIMIT, 50),
-      );
+      const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
+
+      state = {
+        ...state,
+        lastSeenTweetId: newestTweet.id,
+        lastSeenTweetUrl: newestTweet.url,
+        lastCheckAt: new Date().toISOString(),
+        lastError: null,
+      };
+
+      state = await appendMissingCachedDecisions(env, state, authoredTweets, classify, recentDecisionLimit);
+
       await writeMonitorState(env.MONITOR_STATE, state);
 
       return {
@@ -226,10 +253,15 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
 
     if (unseenTweets.length === 0) {
       const latestDecision = state.recentDecisions.find((decision) => decision.tweetId === newestTweet.id);
+      const missingCachedDecision = authoredTweets.some(
+        (tweet) => !state.recentDecisions.some((decision) => decision.tweetId === tweet.id),
+      );
 
-      if (shouldRefreshCachedDecision(latestDecision)) {
-        const classification = await classify(env, newestTweet);
-        state = appendRecentDecision(
+      if (shouldRefreshCachedDecision(latestDecision) || missingCachedDecision) {
+        const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
+
+        state = await appendMissingCachedDecisions(
+          env,
           {
             ...state,
             lastSeenTweetId: newestTweet.id,
@@ -237,8 +269,9 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
             lastCheckAt: new Date().toISOString(),
             lastError: null,
           },
-          createCachedDecision(newestTweet, classification),
-          getNumberEnv(env.RECENT_DECISION_LIMIT, 50),
+          authoredTweets,
+          classify,
+          recentDecisionLimit,
         );
         await writeMonitorState(env.MONITOR_STATE, state);
       } else {

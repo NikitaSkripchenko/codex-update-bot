@@ -59,7 +59,7 @@ The Worker is the only runtime process. It has two entry points:
 - `scheduled(event, env, ctx)`: production cron path.
 - `fetch(request, env, ctx)`: manual operations such as `/health` and authenticated `/run`.
 
-The scheduled path should run every 5 minutes by default. That is fast enough for useful alerts while staying gentle on tweet-provider and OpenRouter usage.
+The scheduled path should run every hour by default. That is frequent enough for useful alerts while staying gentle on tweet-provider and OpenRouter usage.
 
 ### Tweet Provider
 
@@ -366,7 +366,7 @@ compatibility_date = "2026-07-07"
 compatibility_flags = ["nodejs_compat"]
 
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["0 * * * *"]
 
 [[kv_namespaces]]
 binding = "MONITOR_STATE"
@@ -444,7 +444,7 @@ Optional later additions:
 6. Wire the scheduled handler: lock, read state, fetch, filter, classify, notify, persist.
 7. Add `/health` and authenticated `/run`.
 8. Add tests for tweet filtering, ID comparison, state transitions, and classifier normalization.
-9. Deploy the private v1 to Cloudflare Workers with a 5-minute cron.
+9. Deploy the private v1 to Cloudflare Workers with an hourly cron.
 10. Before making the bot public, add webhook secret validation, Durable Object rate limits, D1 subscriptions, queued fanout, and delivery idempotency.
 
 ## Future Extensions

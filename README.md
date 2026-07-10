@@ -184,13 +184,25 @@ Verify health. Replace `<worker-url>` with the URL printed by Wrangler:
 curl "https://<worker-url>/health"
 ```
 
+Open the local-only dashboard against the production Cloudflare KV namespace:
+
+```sh
+## Stop any existing `npm run dev` process first, then run:
+npm run dashboard:dev
+open "http://localhost:8787/dashboard"
+```
+
+`dashboard:dev` uses `wrangler.dashboard.toml`, which deliberately has no `preview_id`; Wrangler therefore binds `MONITOR_STATE` to the production namespace. It also forces the NVIDIA model configured for this project, overriding any stale `OPENROUTER_MODEL` in `.dev.vars`. Normal `npm run dev` uses local/preview state and will not show production decisions. The dashboard routes still return `404` on the public deployed Worker.
+
+Re-evaluating a cached decision that changes from `not_reset` or `uncertain` to `reset_confirmed` sends a subscriber alert and saves its delivery status to production KV. Other re-evaluations update the cached decision only. If OpenRouter is rate limited, the dashboard reports the error and preserves the existing production decision.
+
 Trigger a manual run:
 
 ```sh
 curl -X POST https://<worker-url>/run -H "Authorization: Bearer <CRON_SECRET>"
 ```
 
-The first successful run seeds the watermark to the newest tweet and does not alert historical tweets. The cron trigger runs every 5 minutes after deployment.
+The first successful run seeds the watermark to the newest tweet and does not alert historical tweets. The cron trigger runs every hour after deployment.
 
 ## Public Subscription Mode
 
@@ -267,6 +279,8 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook?drop_pendin
 ## HTTP Routes
 
 - `GET /health`: public health summary without raw secrets or provider error payloads.
+- `GET /dashboard`: local-only cached dashboard with recent tweets, decisions, and model usage logs. Only served on localhost during development.
+- `GET /dashboard.json`: local-only JSON version of the cached dashboard data. Only served on localhost during development.
 - `POST /run`: authenticated manual poll using `Authorization: Bearer <CRON_SECRET>`.
 - `POST /telegram/commands`: authenticated Telegram command menu setup using `Authorization: Bearer <CRON_SECRET>`.
 - `POST /telegram/webhook`: optional Telegram webhook. Disabled unless `TELEGRAM_WEBHOOK_SECRET` is configured.

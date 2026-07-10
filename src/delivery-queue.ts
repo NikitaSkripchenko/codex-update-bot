@@ -125,14 +125,21 @@ export const dispatchAlert = async (
   return dispatchDirectAlert(env, tweet, classification);
 };
 
-const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Promise<void> => {
+type SubscriberDeliveryResult = {
+  deliveredCount: number;
+  permanentFailureCount: number;
+};
+
+const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Promise<SubscriberDeliveryResult> => {
   if (message.classification.verdict !== "reset_confirmed") {
-    return;
+    return { deliveredCount: 0, permanentFailureCount: 0 };
   }
 
   const text = formatAlertMessage(message.tweet, message.classification);
   const delayMs = getNumberEnv(env.TELEGRAM_SEND_DELAY_MS, 40);
   const retryableErrors: string[] = [];
+  let deliveredCount = 0;
+  let permanentFailureCount = 0;
 
   for (const chatId of message.chatIds) {
     const claimed = await claimDelivery(env, message.alertId, chatId);
@@ -145,6 +152,7 @@ const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Pro
 
     if (result.ok) {
       await recordDeliverySuccess(env, message.alertId, chatId);
+      deliveredCount += 1;
       await sleep(delayMs);
       continue;
     }
@@ -153,6 +161,8 @@ const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Pro
 
     if (result.retryable) {
       retryableErrors.push(`${chatId}: ${result.error}`);
+    } else {
+      permanentFailureCount += 1;
     }
 
     await sleep(delayMs);
@@ -161,6 +171,41 @@ const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Pro
   if (retryableErrors.length > 0) {
     throw new Error(`Retryable Telegram delivery failures: ${retryableErrors.join("; ")}`);
   }
+
+  return { deliveredCount, permanentFailureCount };
+};
+
+export const dispatchSubscriberAlertNow = async (
+  env: Env,
+  tweet: Tweet,
+  classification: Classification,
+): Promise<DispatchResult> => {
+  if (!env.SUBSCRIPTIONS_DB) {
+    throw new Error("SUBSCRIPTIONS_DB is required for subscriber alerts");
+  }
+
+  const alertId = getAlertId(tweet, classification);
+  let deliveredCount = 0;
+  let permanentFailureCount = 0;
+  let offset = 0;
+
+  while (true) {
+    const chatIds = await listActiveChatIds(env, SUBSCRIBER_PAGE_SIZE, offset);
+
+    if (chatIds.length === 0) {
+      break;
+    }
+
+    for (const chatIdBatch of chunk(chatIds, QUEUE_CHAT_BATCH_SIZE)) {
+      const result = await deliverQueueMessage(env, { alertId, chatIds: chatIdBatch, classification, tweet });
+      deliveredCount += result.deliveredCount;
+      permanentFailureCount += result.permanentFailureCount;
+    }
+
+    offset += chatIds.length;
+  }
+
+  return { mode: "direct", deliveredCount, permanentFailureCount };
 };
 
 export const processDeliveryBatch = async (

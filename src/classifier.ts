@@ -2,20 +2,30 @@ import { getEnvString } from "./env";
 import type { Classification, ClassificationVerdict, Env, Tweet } from "./types";
 
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+export const DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const MAX_RATIONALE_LENGTH = 120;
 
 export const classificationInstructions = `
 You classify tweets from monitored X/Twitter accounts about whether Codex or ChatGPT rate limits have reset.
 
-Return "reset_confirmed" only when the tweet or its quoted post clearly says or directly implies that user limits, caps, or rate limits have reset, been lifted, or usage is available again now.
+Return "reset_confirmed" only when the tweet or its quoted post clearly says or directly implies that user limits, caps, or rate limits have reset, been lifted, usage is available again now, or an official reset is being/will be applied in a clearly announced window.
 Return "not_reset" when the tweet is unrelated, promotional, conversational, or does not mean limits were reset.
 Return "uncertain" when the tweet could plausibly be about a reset but is not explicit enough to safely treat as confirmed.
 
 Prefer caution over guessing. Replies and quote tweets may provide context, but if the reset meaning is not clear from this post and its quoted text, use "uncertain".
-If the main post talks about a future or next reset, that alone is not a current reset.
+Future reset questions, speculation, or vague next-reset discussion alone are not a current reset. A clear announcement such as "we will reset rate limits over the next 24 hours" is reset_confirmed.
 If a quoted post is the evidence for "reset_confirmed", say that explicitly in the rationale.
 Keep the rationale to one short sentence suitable for a Telegram alert.
+
+Examples:
+- Tweet: "When will Codex rate limits reset?"
+  JSON: {"verdict":"uncertain","rationale":"The post asks about a reset but does not confirm one.","confidence":0.99}
+- Tweet: "We will reset the rate limits again across ChatGPT Work and Codex over the next 24 hours."
+  JSON: {"verdict":"reset_confirmed","rationale":"The post announces rate-limit resets for Codex and ChatGPT Work.","confidence":0.99}
+- Tweet: "The next reset is not ready yet, but we are working on it."
+  JSON: {"verdict":"not_reset","rationale":"The post says the reset has not happened yet.","confidence":0.88}
+- Tweet: "New Codex launch notes are live."
+  JSON: {"verdict":"not_reset","rationale":"The post is unrelated to rate-limit resets.","confidence":0.9}
 
 Return only a JSON object with exactly these keys:
 {"verdict":"reset_confirmed|not_reset|uncertain","rationale":"short sentence","confidence":0.0}
@@ -98,6 +108,19 @@ const clampConfidence = (value: unknown): number => {
   return Math.max(0, Math.min(1, parsed));
 };
 
+const getUsage = (data: any): Classification["usage"] => ({
+  inputTokens: data?.usage?.prompt_tokens || 0,
+  outputTokens: data?.usage?.completion_tokens || 0,
+  reasoningTokens: data?.usage?.completion_tokens_details?.reasoning_tokens || 0,
+  totalTokens: data?.usage?.total_tokens || 0,
+});
+
+const classifyTweetWithFallback = (tweet: Tweet, reasonPrefix: string, model: string, data?: any): Classification => ({
+  ...classifyTweetHeuristically(tweet, reasonPrefix),
+  model,
+  usage: data?.usage ? getUsage(data) : undefined,
+});
+
 export const normalizeClassification = (tweet: Tweet, classification: Partial<Classification>): Classification => {
   const verdict = isClassificationVerdict(classification.verdict) ? classification.verdict : "uncertain";
   let rationale = normalizeWhitespace(typeof classification.rationale === "string" ? classification.rationale : "");
@@ -114,6 +137,7 @@ export const normalizeClassification = (tweet: Tweet, classification: Partial<Cl
     verdict,
     confidence: clampConfidence(classification.confidence),
     rationale: truncateRationale(rationale),
+    model: classification.model,
     usage: classification.usage,
   };
 };
@@ -244,6 +268,7 @@ export const classifyTweet = async (
   fetchFn: typeof fetch = fetch,
 ): Promise<Classification> => {
   const apiKey = getEnvString(env.OPENROUTER_API_KEY);
+  const model = getEnvString(env.OPENROUTER_MODEL, DEFAULT_MODEL);
 
   if (!apiKey) {
     throw new Error("Missing OPENROUTER_API_KEY");
@@ -268,7 +293,7 @@ export const classifyTweet = async (
     method: "POST",
     headers,
     body: JSON.stringify({
-      model: getEnvString(env.OPENROUTER_MODEL, DEFAULT_MODEL),
+      model,
       messages: [
         {
           role: "system",
@@ -302,36 +327,43 @@ export const classifyTweet = async (
   if (!response.ok) {
     const errorText = await response.text();
     if ([429, 503, 529].includes(response.status)) {
-      return classifyTweetHeuristically(tweet, `OpenRouter returned ${response.status}`);
+      return classifyTweetWithFallback(tweet, `OpenRouter returned ${response.status}`, model);
     }
 
     throw new Error(`OpenRouter classification failed with ${response.status}: ${errorText.slice(0, 240)}`);
   }
 
-  const data = (await response.json()) as any;
+  const data = await response.json().catch(() => null) as any;
+
+  if (!data) {
+    return classifyTweetWithFallback(tweet, "OpenRouter returned invalid JSON", model);
+  }
+
   const outputText = extractResponseText(data);
 
   if (!outputText) {
-    throw new Error("OpenRouter returned an empty classification response");
+    return classifyTweetWithFallback(tweet, "OpenRouter returned an empty classification response", model, data);
   }
 
   const jsonText = extractJsonObjectText(outputText);
 
   if (!jsonText) {
-    throw new Error("OpenRouter returned a non-JSON classification response");
+    return classifyTweetWithFallback(tweet, "OpenRouter returned a non-JSON classification response", model, data);
   }
 
-  const parsed = JSON.parse(jsonText) as Partial<Classification>;
+  let parsed: Partial<Classification>;
+
+  try {
+    parsed = JSON.parse(jsonText) as Partial<Classification>;
+  } catch (_error) {
+    return classifyTweetWithFallback(tweet, "OpenRouter returned invalid classification JSON", model, data);
+  }
 
   return normalizeClassification(tweet, {
     confidence: parsed.confidence,
+    model,
     rationale: parsed.rationale,
-    usage: {
-      inputTokens: data?.usage?.prompt_tokens || 0,
-      outputTokens: data?.usage?.completion_tokens || 0,
-      reasoningTokens: data?.usage?.completion_tokens_details?.reasoning_tokens || 0,
-      totalTokens: data?.usage?.total_tokens || 0,
-    },
+    usage: getUsage(data),
     verdict: parsed.verdict,
   });
 };

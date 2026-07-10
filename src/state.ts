@@ -19,6 +19,7 @@ export const createInitialMonitorState = (): MonitorState => ({
 
 const normalizeDecision = (value: unknown): MonitorDecision | null => {
   const decision = value as Partial<MonitorDecision> | null;
+  const usage = decision?.usage as Partial<NonNullable<MonitorDecision["usage"]>> | undefined;
 
   if (!decision || typeof decision.tweetId !== "string" || typeof decision.tweetUrl !== "string") {
     return null;
@@ -36,6 +37,15 @@ const normalizeDecision = (value: unknown): MonitorDecision | null => {
     verdict: decision.verdict as MonitorDecision["verdict"],
     confidence: typeof decision.confidence === "number" ? decision.confidence : 0,
     rationale: typeof decision.rationale === "string" ? decision.rationale : "",
+    model: typeof decision.model === "string" ? decision.model : undefined,
+    usage: usage
+      ? {
+          inputTokens: typeof usage.inputTokens === "number" ? usage.inputTokens : 0,
+          outputTokens: typeof usage.outputTokens === "number" ? usage.outputTokens : 0,
+          reasoningTokens: typeof usage.reasoningTokens === "number" ? usage.reasoningTokens : 0,
+          totalTokens: typeof usage.totalTokens === "number" ? usage.totalTokens : 0,
+        }
+      : undefined,
     alertedAt: typeof decision.alertedAt === "string" ? decision.alertedAt : "",
     deliveryMode: decision.deliveryMode === "cached" || decision.deliveryMode === "queued" ? decision.deliveryMode : "direct",
     deliveredCount: typeof decision.deliveredCount === "number" ? decision.deliveredCount : undefined,
@@ -94,9 +104,7 @@ export const appendRecentDecision = (
   const boundedLimit = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 50;
   const recentDecisions = [
     decision,
-    ...state.recentDecisions.filter(
-      (entry) => entry.tweetId !== decision.tweetId || entry.verdict !== decision.verdict,
-    ),
+    ...state.recentDecisions.filter((entry) => entry.tweetId !== decision.tweetId),
   ].slice(0, boundedLimit);
 
   return {

@@ -1,0 +1,46 @@
+name = "codex-limit-telegram-bot"
+main = "src/index.ts"
+compatibility_date = "2026-07-07"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[triggers]
+crons = ["0 * * * *"]
+
+[vars]
+OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
+OPENROUTER_APP_NAME = "Codex Limit Telegram Bot"
+TARGET_USERNAME = "thsottiaux"
+TARGET_USERNAMES = "thsottiaux,sama"
+NITTER_BASE_URL = "https://nt.vern.cc,https://nitter.net"
+POLL_LOOKBACK_HOURS = "24"
+RECENT_DECISION_LIMIT = "50"
+PUBLIC_SUBSCRIPTIONS_ENABLED = "false"
+TELEGRAM_SEND_DELAY_MS = "40"
+
+[[kv_namespaces]]
+binding = "MONITOR_STATE"
+id = "<production-kv-namespace-id>"
+preview_id = "<preview-kv-namespace-id>"
+
+# Public subscription mode only. Enable after creating D1, Queue, and Durable Object resources.
+# [[d1_databases]]
+# binding = "SUBSCRIPTIONS_DB"
+# database_name = "codex-limit-telegram-subscriptions"
+# database_id = "<production-d1-database-id>"
+
+# [[queues.producers]]
+# binding = "TELEGRAM_DELIVERY_QUEUE"
+# queue = "codex-limit-telegram-delivery"
+
+# [[queues.consumers]]
+# queue = "codex-limit-telegram-delivery"
+# max_batch_size = 10
+
+# [[durable_objects.bindings]]
+# name = "RATE_LIMITER"
+# class_name = "RateLimiter"
+
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["RateLimiter"]

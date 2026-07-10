@@ -1,7 +1,7 @@
 import { appendRecentDecision, createInitialMonitorState } from "../src/state";
 
 describe("state", () => {
-  it("keeps bounded recent decisions and replaces duplicate tweet verdicts", () => {
+  it("keeps bounded recent decisions and replaces decisions for the same tweet", () => {
     const state = createInitialMonitorState();
     const first = appendRecentDecision(
       state,
@@ -37,7 +37,7 @@ describe("state", () => {
         tweetId: "1",
         tweetUrl: "url-1b",
         tweetCreatedAt: "created",
-        verdict: "not_reset",
+        verdict: "reset_confirmed",
         confidence: 0.9,
         rationale: "still no",
         alertedAt: "later",
@@ -50,5 +50,6 @@ describe("state", () => {
     expect(third.recentDecisions).toHaveLength(2);
     expect(third.recentDecisions.map((entry) => entry.tweetId)).toEqual(["1", "2"]);
     expect(third.recentDecisions[0]?.tweetUrl).toBe("url-1b");
+    expect(third.recentDecisions[0]?.verdict).toBe("reset_confirmed");
   });
 });
