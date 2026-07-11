@@ -127,7 +127,7 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
   }
 
   if (command === "/status" || command === "/last") {
-    await sendProgressThenFinal(env, chatId, "Checking the cached monitor status...", async () => {
+    await sendProgressThenFinal(env, chatId, "<i>Checking the cached monitor status...</i>", async () => {
       const state = await readMonitorState(env.MONITOR_STATE);
       return formatStatusMessage(state);
     });
@@ -135,37 +135,37 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
   }
 
   if (command === "/subscribe") {
-    await sendProgressThenFinal(env, chatId, "Subscribing this chat...", async () => {
+    await sendProgressThenFinal(env, chatId, "<i>Subscribing this chat...</i>", async () => {
       if (!getBooleanEnv(env.PUBLIC_SUBSCRIPTIONS_ENABLED)) {
         return [
-          "Subscriptions are not open yet.",
+          "<b>Subscriptions are not open yet.</b>",
           "",
-          "Nothing changed for this chat. You can still use /status to see today's cached results and the latest post.",
+          "Nothing changed. Use <code>/status</code> to see the latest monitored post.",
         ].join("\n");
       }
 
       const result = await upsertSubscription(env, chatId, chatType);
       return result === "already_active"
-        ? "Already subscribed. This chat will receive future confirmed reset alerts."
-        : "Subscribed. This chat will receive future confirmed reset alerts.";
+        ? "<b>Already subscribed</b>\nThis chat will receive future confirmed reset alerts."
+        : "<b>Subscribed</b>\nThis chat will receive future confirmed reset alerts.";
     });
     return;
   }
 
   if (command === "/unsubscribe") {
-    await sendProgressThenFinal(env, chatId, "Unsubscribing this chat...", async () => {
+    await sendProgressThenFinal(env, chatId, "<i>Unsubscribing this chat...</i>", async () => {
       if (!getBooleanEnv(env.PUBLIC_SUBSCRIPTIONS_ENABLED)) {
         return [
-          "Subscriptions are not open yet.",
+          "<b>Subscriptions are not open yet.</b>",
           "",
-          "Nothing changed for this chat. You can still use /status to see today's cached results and the latest post.",
+          "Nothing changed. Use <code>/status</code> to see the latest monitored post.",
         ].join("\n");
       }
 
       const result = await unsubscribeChat(env, chatId);
       return result === "already_inactive"
-        ? "Already unsubscribed. This chat is not receiving reset alerts."
-        : "Unsubscribed. This chat will no longer receive reset alerts.";
+        ? "<b>Already unsubscribed</b>\nThis chat is not receiving reset alerts."
+        : "<b>Unsubscribed</b>\nThis chat will no longer receive reset alerts.";
     });
     return;
   }
@@ -175,13 +175,17 @@ const handleCommand = async (env: Env, chatId: string, chatType: string, command
       env,
       chatId,
       isAdminChat(env, chatId)
-        ? "Manual runs must use authenticated HTTP POST /run. Telegram commands cannot trigger expensive monitor runs."
-        : "Manual runs are admin-only.",
+        ? "<b>Manual runs use the API.</b>\nTelegram commands cannot trigger expensive monitor runs."
+        : "<b>Admin-only command</b>",
     );
     return;
   }
 
-  await safeReply(env, chatId, `I do not know ${command}.\n\nTry /status for today's cached results and the latest post, or /help for every command.`);
+  await safeReply(
+    env,
+    chatId,
+    `I do not know <code>${command.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</code>.\n\nTry <code>/status</code> for the latest monitored post, or <code>/help</code> for every command.`,
+  );
 };
 
 export const handleTelegramWebhook = async (request: Request, env: Env): Promise<Response> => {

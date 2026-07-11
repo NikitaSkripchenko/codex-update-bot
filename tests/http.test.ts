@@ -62,6 +62,7 @@ describe("http dashboard", () => {
     expect(response.headers.get("content-type")).toContain("text/html");
     expect(body).toContain("Cloudflare<br><em>data view</em>");
     expect(body).toContain("Cloudflare KV binding: MONITOR_STATE");
+    expect(body).toContain("Active subscribers</dt><dd>0</dd>");
     expect(body).toContain("Reset confirmed");
     expect(body).toContain("Re-evaluate this decision");
     expect(body).toContain('data-reevaluate-tweet-id="0"');
@@ -82,11 +83,28 @@ describe("http dashboard", () => {
     });
 
     const response = await handleHttpRequest(new Request("http://localhost:8787/dashboard.json"), env);
-    const body = (await response.json()) as { model?: string; source?: string; state?: { recentDecisions?: unknown[] } };
+    const body = (await response.json()) as { model?: string; source?: string; state?: { recentDecisions?: unknown[] }; subscribers?: number };
 
     expect(body.model).toBe("test/model");
     expect(body.source).toBe("Cloudflare KV binding: MONITOR_STATE");
+    expect(body.subscribers).toBe(0);
     expect(body.state?.recentDecisions).toEqual([]);
+  });
+
+  it("shows the active subscriber count from D1", async () => {
+    const env: Env = {
+      ...createEnv(),
+      SUBSCRIPTIONS_DB: {
+        prepare: () => ({
+          first: async () => ({ active: 7, disabled: 0 }),
+        }),
+      } as unknown as D1Database,
+    };
+
+    const response = await handleHttpRequest(new Request("http://localhost:8787/dashboard"), env);
+    const body = await response.text();
+
+    expect(body).toContain("Active subscribers</dt><dd>7</dd>");
   });
 
   it("explains an empty Cloudflare KV decision log", async () => {

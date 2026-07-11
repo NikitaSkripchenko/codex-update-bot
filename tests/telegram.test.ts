@@ -31,9 +31,10 @@ describe("telegram", () => {
       },
     );
 
-    expect(text).toContain("Codex reset alert");
-    expect(text).toContain("Verdict: Reset confirmed");
-    expect(text).toContain("What to do: Open Codex or ChatGPT and try the blocked task again.");
+    expect(text).toContain("<b>Codex limit reset</b>");
+    expect(text).toContain("✅ Reset confirmed");
+    expect(text).toContain('href="https://x.com/thsottiaux/status/1"');
+    expect(text).toContain("<blockquote expandable>");
     expect(text.length).toBeLessThanOrEqual(3900);
   });
 
@@ -62,14 +63,12 @@ describe("telegram", () => {
       ],
     });
 
-    expect(text).toContain("Monitor: healthy");
-    expect(text).toContain("Latest monitored post:");
-    expect(text).toContain("Post: https://x.com/thsottiaux/status/1");
-    expect(text).toContain("Delivery: cached only; no alert sent");
+    expect(text).toContain("<b>Latest monitored post</b>");
+    expect(text).toContain('href="https://x.com/thsottiaux/status/1"');
     expect(text).toContain("latest cached tweet");
   });
 
-  it("limits status results to the last 24 hours and keeps the latest monitored post", () => {
+  it("keeps the latest monitored post without exposing the result history", () => {
     const text = formatStatusMessage(
       {
         lastSeenTweetId: "newest",
@@ -101,21 +100,21 @@ describe("telegram", () => {
           },
         ],
       },
-      new Date("2026-07-10T12:00:00.000Z"),
     );
 
-    expect(text).toContain("Today's results (last 24 hours):");
     expect(text).toContain("https://x.com/thsottiaux/status/newest");
-    expect(text).not.toContain("https://x.com/thsottiaux/status/old");
+    expect(text).not.toContain("Today's results");
+    expect(text).not.toContain("Delivery");
+    expect(text).not.toContain("Last error");
     expect(text).toContain("newest cached tweet");
   });
 
   it("formats help as predictable chat guidance", () => {
     const text = formatHelpMessage(false);
 
-    expect(text).toContain("Codex reset alert bot");
-    expect(text).toContain("/status shows cached results from the last 24 hours");
-    expect(text).toContain("/subscribe - unavailable until public subscriptions are enabled");
+    expect(text).toContain("<b>Codex limit reset alerts</b>");
+    expect(text).toContain("<code>/status</code> shows cached results");
+    expect(text).toContain("<code>/subscribe</code> - currently unavailable");
   });
 
   it("keeps Telegram command keyboard action-oriented", () => {

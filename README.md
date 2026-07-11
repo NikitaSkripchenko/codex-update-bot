@@ -194,6 +194,12 @@ open "http://localhost:8787/dashboard"
 
 `dashboard:dev` uses `wrangler.dashboard.toml`, which deliberately has no `preview_id`; Wrangler therefore binds `MONITOR_STATE` to the production namespace. It also forces the NVIDIA model configured for this project, overriding any stale `OPENROUTER_MODEL` in `.dev.vars`. Normal `npm run dev` uses local/preview state and will not show production decisions. The dashboard routes still return `404` on the public deployed Worker.
 
+If you run the dashboard through `npm run dev`, initialize its local D1 state once before opening `/dashboard`:
+
+```sh
+npm run db:migrate:local
+```
+
 Re-evaluating a cached decision that changes from `not_reset` or `uncertain` to `reset_confirmed` sends a subscriber alert and saves its delivery status to production KV. Other re-evaluations update the cached decision only. If OpenRouter is rate limited, the dashboard reports the error and preserves the existing production decision.
 
 Trigger a manual run:

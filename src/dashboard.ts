@@ -2,6 +2,7 @@ import { classifyTweet } from "./classifier";
 import { dispatchAlert, dispatchSubscriberAlertNow } from "./delivery-queue";
 import { getEnvString, isPublicSubscriptionsEnabled, jsonResponse } from "./env";
 import { appendRecentDecision, patchMonitorState, readMonitorState } from "./state";
+import { getSubscriptionStats } from "./subscriptions";
 import type { Classification, DispatchResult, Env, MonitorDecision, MonitorState, Tweet } from "./types";
 
 const escapeHtml = (value: string | null | undefined): string =>
@@ -88,11 +89,17 @@ export const getDashboardData = async (env: Env): Promise<{
   state: MonitorState;
   model: string;
   source: string;
-}> => ({
-  state: await readMonitorState(env.MONITOR_STATE),
-  model: getEnvString(env.OPENROUTER_MODEL, "default OpenRouter model"),
-  source: "Cloudflare KV binding: MONITOR_STATE",
-});
+  subscribers: number;
+}> => {
+  const [state, subscriptionStats] = await Promise.all([readMonitorState(env.MONITOR_STATE), getSubscriptionStats(env)]);
+
+  return {
+    state,
+    model: getEnvString(env.OPENROUTER_MODEL, "default OpenRouter model"),
+    source: "Cloudflare KV binding: MONITOR_STATE",
+    subscribers: subscriptionStats.active,
+  };
+};
 
 export const dashboardJsonResponse = async (env: Env): Promise<Response> => jsonResponse(await getDashboardData(env));
 
@@ -204,7 +211,7 @@ const renderDecisionRows = (decisions: MonitorDecision[]): string => {
 };
 
 export const dashboardHtmlResponse = async (env: Env): Promise<Response> => {
-  const { state, model, source } = await getDashboardData(env);
+  const { state, model, source, subscribers } = await getDashboardData(env);
   const rawState = JSON.stringify(state, null, 2);
   const status = state.lastError ? "Attention needed" : "Healthy";
   const statusClass = state.lastError ? "error" : "healthy";
@@ -226,7 +233,7 @@ export const dashboardHtmlResponse = async (env: Env): Promise<Response> => {
     h1 { font-size: clamp(2.3rem, 6vw, 4.5rem); line-height: .92; } h1 em { color: var(--blue); font-style: normal; }
     h2 { font-size: clamp(1.65rem, 3vw, 2.6rem); } .kicker, .eyebrow { color: var(--muted); font-size: .75rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
     .source { color: var(--muted); max-width: 390px; text-align: right; } .source strong { color: var(--ink); display: block; }
-    .summary { display: grid; gap: 1px; grid-template-columns: repeat(4, 1fr); margin: 24px 0; background: var(--line); border: 1px solid var(--line); }
+    .summary { display: grid; gap: 1px; grid-template-columns: repeat(5, 1fr); margin: 24px 0; background: var(--line); border: 1px solid var(--line); }
     .stat { background: var(--panel); min-height: 116px; padding: 17px; } .stat dt { color: var(--muted); font-size: .72rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; } .stat dd { font-family: Arial, Helvetica, sans-serif; font-size: 1.1rem; font-weight: 700; letter-spacing: -.025em; margin: 12px 0 0; overflow-wrap: anywhere; }
     .healthy { color: var(--teal); } .error { color: var(--red); }
     .latest { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--blue); padding: clamp(20px, 4vw, 38px); } .latest.empty { border-left-color: var(--orange); }
@@ -249,6 +256,7 @@ export const dashboardHtmlResponse = async (env: Env): Promise<Response> => {
     </header>
     <section class="summary" aria-label="Cloudflare monitor summary">
       <dl class="stat"><dt>Monitor status</dt><dd class="${statusClass}">${escapeHtml(status)}</dd></dl>
+      <dl class="stat"><dt>Active subscribers</dt><dd>${escapeHtml(subscribers.toString())}</dd></dl>
       <dl class="stat"><dt>Cached decisions</dt><dd>${escapeHtml(state.recentDecisions.length.toString())}</dd></dl>
       <dl class="stat"><dt>Last KV update</dt><dd>${escapeHtml(formatDate(state.lastCheckAt))}</dd></dl>
       <dl class="stat"><dt>Configured model</dt><dd>${escapeHtml(model)}</dd></dl>

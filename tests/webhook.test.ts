@@ -124,8 +124,9 @@ describe("telegram webhook", () => {
     expect(body.ok).toBe(true);
     expect(String(calls[0]?.input)).toContain("/sendChatAction");
     expect(String(calls[1]?.input)).toContain("/sendMessage");
-    expect(calls[1]?.body.text).toContain("I do not know /wat.");
-    expect(calls[1]?.body.text).toContain("Try /status for today's cached results and the latest post, or /help for every command.");
+    expect(calls[1]?.body.parse_mode).toBe("HTML");
+    expect(calls[1]?.body.text).toContain("I do not know <code>/wat</code>.");
+    expect(calls[1]?.body.text).toContain("Try <code>/status</code> for the latest monitored post");
   });
 
   it("does not rewrite an already active subscription", async () => {
@@ -154,8 +155,8 @@ describe("telegram webhook", () => {
 
     const edits = calls.filter((call) => String(call.input).includes("/editMessageText"));
     expect(db.writes).toBe(1);
-    expect(edits[0]?.body.text).toBe("Subscribed. This chat will receive future confirmed reset alerts.");
-    expect(edits[1]?.body.text).toBe("Already subscribed. This chat will receive future confirmed reset alerts.");
+    expect(edits[0]?.body.text).toBe("<b>Subscribed</b>\nThis chat will receive future confirmed reset alerts.");
+    expect(edits[1]?.body.text).toBe("<b>Already subscribed</b>\nThis chat will receive future confirmed reset alerts.");
   });
 
   it("does not rewrite an already inactive subscription", async () => {
@@ -185,7 +186,7 @@ describe("telegram webhook", () => {
 
     const edits = calls.filter((call) => String(call.input).includes("/editMessageText"));
     expect(db.writes).toBe(2);
-    expect(edits[1]?.body.text).toBe("Unsubscribed. This chat will no longer receive reset alerts.");
-    expect(edits[2]?.body.text).toBe("Already unsubscribed. This chat is not receiving reset alerts.");
+    expect(edits[1]?.body.text).toBe("<b>Unsubscribed</b>\nThis chat will no longer receive reset alerts.");
+    expect(edits[2]?.body.text).toBe("<b>Already unsubscribed</b>\nThis chat is not receiving reset alerts.");
   });
 });

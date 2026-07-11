@@ -3,11 +3,18 @@ import type { Classification, Env, MonitorState, Tweet } from "./types";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const SAFE_MESSAGE_LIMIT = 3900;
-const STATUS_WINDOW_MS = 24 * 60 * 60 * 1000;
-const MAX_TODAY_STATUS_DECISIONS = 20;
+
+const escapeTelegramHtml = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+const telegramLink = (url: string, label: string): string =>
+  `<a href="${escapeTelegramHtml(url)}">${escapeTelegramHtml(label)}</a>`;
+
+const telegramQuote = (value: string, expandable = false): string =>
+  `<blockquote${expandable ? " expandable" : ""}>${escapeTelegramHtml(value)}</blockquote>`;
 
 export const TELEGRAM_COMMANDS = [
-  { command: "status", description: "See today's results and the latest cached post" },
+  { command: "status", description: "See the latest cached post" },
   { command: "subscribe", description: "Get confirmed reset alerts in this chat" },
   { command: "unsubscribe", description: "Stop reset alerts in this chat" },
   { command: "help", description: "See how the bot works" },
@@ -48,100 +55,55 @@ export const truncateForTelegram = (value: string, maxLength = SAFE_MESSAGE_LIMI
 
 const formatVerdictText = (verdict: Classification["verdict"]): string => {
   if (verdict === "reset_confirmed") {
-    return "Reset confirmed";
+    return "✅ Reset confirmed";
   }
 
   if (verdict === "uncertain") {
-    return "Uncertain";
+    return "⚠️ Uncertain";
   }
 
-  return "Not reset";
+  return "❌ Not reset";
 };
 
 const formatVerdict = (classification: Classification): string => formatVerdictText(classification.verdict);
 
 const formatConfidence = (confidence: number): string => `${Math.round(confidence * 100)}%`;
 
-const formatDeliveryMode = (decision: MonitorState["recentDecisions"][number]): string => {
-  if (decision.deliveryMode === "direct") {
-    return `sent to ${decision.deliveredCount ?? 0} chat${decision.deliveredCount === 1 ? "" : "s"}`;
-  }
-
-  if (decision.deliveryMode === "queued") {
-    return `queued for ${decision.queuedCount ?? 0} subscriber${decision.queuedCount === 1 ? "" : "s"}`;
-  }
-
-  return "cached only; no alert sent";
-};
-
 export const formatAlertMessage = (tweet: Tweet, classification: Classification): string =>
   truncateForTelegram(
     [
-      "Codex reset alert",
+      "<b>Codex limit reset</b>",
       "",
-      `Verdict: ${formatVerdict(classification)}`,
-      `Confidence: ${formatConfidence(classification.confidence)}`,
-      `Why: ${classification.rationale}`,
+      telegramQuote(`${formatVerdict(classification)}\n${formatConfidence(classification.confidence)} confidence`),
+      `<b>Why it matters</b>\n${escapeTelegramHtml(classification.rationale)}`,
       "",
-      "What to do: Open Codex or ChatGPT and try the blocked task again.",
-      `Source: @${tweet.authorUsername}`,
-      `Post: ${tweet.url}`,
+      "<b>Next step</b>\nOpen Codex or ChatGPT and retry the blocked task.",
+      telegramLink(tweet.url, `View post from @${tweet.authorUsername}`),
       "",
-      "Original post:",
-      truncateForTelegram(tweet.fullText, 900),
+      "<b>Original post</b>",
+      telegramQuote(truncateForTelegram(tweet.fullText, 900), true),
     ].join("\n"),
   );
 
-const getDecisionTimestamp = (decision: MonitorState["recentDecisions"][number]): number | null => {
-  const timestamp = new Date(decision.tweetCreatedAt).valueOf();
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
 const getLatestDecision = (state: MonitorState): MonitorState["recentDecisions"][number] | undefined =>
   state.recentDecisions.find((decision) => decision.tweetId === state.lastSeenTweetId) ||
-  [...state.recentDecisions].sort((left, right) => (getDecisionTimestamp(right) || 0) - (getDecisionTimestamp(left) || 0))[0];
+  state.recentDecisions[0];
 
-const formatTodayDecision = (decision: MonitorState["recentDecisions"][number]): string =>
-  `- ${formatVerdictText(decision.verdict)} (${formatConfidence(decision.confidence)}) | ${decision.tweetUrl}`;
-
-export const formatStatusMessage = (state: MonitorState, now = new Date()): string => {
+export const formatStatusMessage = (state: MonitorState): string => {
   const latest = getLatestDecision(state);
-  const cutoff = now.valueOf() - STATUS_WINDOW_MS;
-  const todayDecisions = state.recentDecisions
-    .filter((decision) => {
-      const timestamp = getDecisionTimestamp(decision);
-      return timestamp !== null && timestamp >= cutoff && timestamp <= now.valueOf();
-    })
-    .sort((left, right) => (getDecisionTimestamp(right) || 0) - (getDecisionTimestamp(left) || 0));
-  const visibleTodayDecisions = todayDecisions.slice(0, MAX_TODAY_STATUS_DECISIONS);
-  const todaySummary = visibleTodayDecisions.length > 0
-    ? visibleTodayDecisions.map(formatTodayDecision)
-    : ["No cached posts in the last 24 hours."];
 
   return truncateForTelegram(
     [
-      "Codex limit monitor",
+      "<b>Codex limit monitor</b>",
       "",
-      `Monitor: ${state.lastError ? "needs attention" : "healthy"}`,
-      `Last checked: ${state.lastCheckAt || "never"}`,
-      state.lastError ? `Last error: ${truncateForTelegram(state.lastError, 220)}` : null,
-      "Alerts: confirmed resets only",
-      "",
-      "Today's results (last 24 hours):",
-      ...todaySummary,
-      todayDecisions.length > visibleTodayDecisions.length
-        ? `Showing the newest ${MAX_TODAY_STATUS_DECISIONS} of ${todayDecisions.length} results.`
-        : null,
-      "",
-      "Latest monitored post:",
-      latest ? `Post: ${latest.tweetUrl}` : `Post: ${state.lastSeenTweetUrl || "none"}`,
-      latest ? `Posted: ${latest.tweetCreatedAt || "unknown"}` : null,
-      latest ? `Verdict: ${formatVerdictText(latest.verdict)} (${formatConfidence(latest.confidence)})` : "Verdict: none yet",
-      latest ? `Delivery: ${formatDeliveryMode(latest)}` : null,
-      latest ? `Why: ${latest.rationale}` : null,
+      "<b>Latest monitored post</b>",
+      latest ? telegramLink(latest.tweetUrl, "View post") : state.lastSeenTweetUrl ? telegramLink(state.lastSeenTweetUrl, "View post") : "No post yet.",
+      latest ? `<b>Posted</b>: ${escapeTelegramHtml(latest.tweetCreatedAt || "unknown")}` : null,
+      latest ? `<b>Verdict</b>: ${formatVerdictText(latest.verdict)} (${formatConfidence(latest.confidence)})` : "<b>Verdict</b>: none yet",
+      latest ? `<b>Why</b>: ${escapeTelegramHtml(latest.rationale)}` : null,
       latest?.tweetText ? "" : null,
-      latest?.tweetText ? "Original post:" : null,
-      latest?.tweetText ? truncateForTelegram(latest.tweetText, 900) : null,
+      latest?.tweetText ? "<b>Original post</b>" : null,
+      latest?.tweetText ? telegramQuote(truncateForTelegram(latest.tweetText, 900), true) : null,
     ]
       .filter((line): line is string => line !== null)
       .join("\n"),
@@ -151,22 +113,22 @@ export const formatStatusMessage = (state: MonitorState, now = new Date()): stri
 export const formatHelpMessage = (publicSubscriptionsEnabled: boolean): string =>
   truncateForTelegram(
     [
-      "Codex reset alert bot",
+      "<b>Codex limit reset alerts</b>",
       "",
-      "Use it when you want to know whether a monitored X post likely means Codex or ChatGPT limits reset.",
+      "Get a notification when a monitored X post confirms that Codex or ChatGPT limits have reset.",
       "",
-      "How it behaves:",
+      "<b>How it works</b>",
       "- I check configured X accounts on a schedule.",
-      "- I only send alerts for confirmed resets.",
-      "- /status shows cached results from the last 24 hours, then the latest monitored post. It never triggers a new monitor run.",
+      "- I only alert on confirmed resets.",
+      "- <code>/status</code> shows cached results and never runs a new check.",
       "",
-      "Commands:",
-      "/status - show today's results and the latest cached post",
+      "<b>Commands</b>",
+      "<code>/status</code> - the latest monitored post",
       publicSubscriptionsEnabled
-        ? "/subscribe - get future confirmed reset alerts in this chat"
-        : "/subscribe - unavailable until public subscriptions are enabled",
-      "/unsubscribe - stop alerts in this chat",
-      "/help - show this guide",
+        ? "<code>/subscribe</code> - receive future confirmed alerts here"
+        : "<code>/subscribe</code> - currently unavailable",
+      "<code>/unsubscribe</code> - stop alerts in this chat",
+      "<code>/help</code> - show this guide",
     ].join("\n"),
   );
 
@@ -206,6 +168,7 @@ export const sendTelegramMessage = async (
   const payload: Record<string, unknown> = {
     chat_id: chatId,
     disable_web_page_preview: options.disableWebPagePreview ?? false,
+    parse_mode: "HTML",
     text: truncateForTelegram(text, TELEGRAM_MESSAGE_LIMIT),
   };
 
@@ -328,6 +291,7 @@ export const editTelegramMessage = async (
       chat_id: chatId,
       disable_web_page_preview: false,
       message_id: messageId,
+      parse_mode: "HTML",
       text: truncateForTelegram(text, TELEGRAM_MESSAGE_LIMIT),
     }),
   });
