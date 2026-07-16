@@ -70,6 +70,9 @@ const formatVerdict = (classification: Classification): string => formatVerdictT
 
 const formatConfidence = (confidence: number): string => `${Math.round(confidence * 100)}%`;
 
+const formatActiveResetStatus = (isActive: boolean): string =>
+  isActive ? "Active (a reset was confirmed within the last 24 hours)" : "Not active";
+
 export const formatAlertMessage = (tweet: Tweet, classification: Classification): string =>
   truncateForTelegram(
     [
@@ -101,8 +104,9 @@ export const formatStatusMessage = (state: MonitorState): string => {
       "<b>Latest monitored post</b>",
       latest ? telegramLink(latest.tweetUrl, "View post") : state.lastSeenTweetUrl ? telegramLink(state.lastSeenTweetUrl, "View post") : "No post yet.",
       latest ? `<b>Posted</b>: ${escapeTelegramHtml(latest.tweetCreatedAt || "unknown")}` : null,
-      `<b>Verdict</b>: ${verdict}`,
+      latest ? `<b>Latest post verdict</b>: ${escapeTelegramHtml(formatVerdictText(latest.verdict))}` : null,
       latest ? `<b>Why</b>: ${escapeTelegramHtml(latest.rationale)}` : null,
+      `<b>Reset status</b>: ${formatActiveResetStatus(verdict)}`,
       latest?.tweetText ? "" : null,
       latest?.tweetText ? "<b>Original post</b>" : null,
       latest?.tweetText ? telegramQuote(truncateForTelegram(latest.tweetText, 900), true) : null,

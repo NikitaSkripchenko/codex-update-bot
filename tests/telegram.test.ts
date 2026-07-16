@@ -109,7 +109,7 @@ describe("telegram", () => {
     expect(text).toContain("newest cached tweet");
   });
 
-  it("keeps the status verdict true after a later non-reset tweet", () => {
+  it("distinguishes the latest post verdict from an earlier active reset", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T12:00:00.000Z"));
 
@@ -124,7 +124,8 @@ describe("telegram", () => {
       ],
     });
 
-    expect(text).toContain("<b>Verdict</b>: true");
+    expect(text).toContain("<b>Latest post verdict</b>: ❌ Not reset");
+    expect(text).toContain("<b>Reset status</b>: Active (a reset was confirmed within the last 24 hours)");
     vi.useRealTimers();
   });
 
