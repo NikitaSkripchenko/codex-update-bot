@@ -1,5 +1,5 @@
 import { splitCsv } from "./env";
-import { hasActiveReset } from "./state";
+import { getLatestActiveReset } from "./state";
 import type { Classification, Env, MonitorState, Tweet } from "./types";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -70,8 +70,10 @@ const formatVerdict = (classification: Classification): string => formatVerdictT
 
 const formatConfidence = (confidence: number): string => `${Math.round(confidence * 100)}%`;
 
-const formatActiveResetStatus = (isActive: boolean): string =>
-  isActive ? "Active (a reset was confirmed within the last 24 hours)" : "Not active";
+const formatResetStatus = (isActive: boolean): string =>
+  isActive
+    ? "✅ Active (a reset was confirmed within the last 24 hours)"
+    : "❌ Inactive (no reset was confirmed within the last 24 hours)";
 
 export const formatAlertMessage = (tweet: Tweet, classification: Classification): string =>
   truncateForTelegram(
@@ -95,21 +97,23 @@ const getLatestDecision = (state: MonitorState): MonitorState["recentDecisions"]
 
 export const formatStatusMessage = (state: MonitorState): string => {
   const latest = getLatestDecision(state);
-  const verdict = hasActiveReset(state);
+  const latestReset = getLatestActiveReset(state);
 
   return truncateForTelegram(
     [
       "<b>Codex limit monitor</b>",
+      "",
+      `<b>Reset status</b>: ${formatResetStatus(Boolean(latestReset))}${
+        latestReset ? ` ${telegramLink(latestReset.tweetUrl, "View confirming post")}` : ""
+      }`,
+      "",
+      "______________________________",
       "",
       "<b>Latest monitored post</b>",
       latest ? telegramLink(latest.tweetUrl, "View post") : state.lastSeenTweetUrl ? telegramLink(state.lastSeenTweetUrl, "View post") : "No post yet.",
       latest ? `<b>Posted</b>: ${escapeTelegramHtml(latest.tweetCreatedAt || "unknown")}` : null,
       latest ? `<b>Latest post verdict</b>: ${escapeTelegramHtml(formatVerdictText(latest.verdict))}` : null,
       latest ? `<b>Why</b>: ${escapeTelegramHtml(latest.rationale)}` : null,
-      `<b>Reset status</b>: ${formatActiveResetStatus(verdict)}`,
-      latest?.tweetText ? "" : null,
-      latest?.tweetText ? "<b>Original post</b>" : null,
-      latest?.tweetText ? telegramQuote(truncateForTelegram(latest.tweetText, 900), true) : null,
     ]
       .filter((line): line is string => line !== null)
       .join("\n"),

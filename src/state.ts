@@ -113,15 +113,23 @@ export const appendRecentDecision = (
   };
 };
 
-export const hasActiveReset = (state: MonitorState, now = Date.now()): boolean =>
-  state.recentDecisions.some((decision) => {
-    if (decision.verdict !== "reset_confirmed") {
-      return false;
-    }
+export const getLatestActiveReset = (
+  state: MonitorState,
+  now = Date.now(),
+): MonitorDecision | undefined =>
+  state.recentDecisions
+    .filter((decision) => {
+      if (decision.verdict !== "reset_confirmed") {
+        return false;
+      }
 
-    const publishedAt = new Date(decision.tweetCreatedAt).valueOf();
-    return Number.isFinite(publishedAt) && publishedAt <= now && now - publishedAt < 24 * 60 * 60 * 1000;
-  });
+      const publishedAt = new Date(decision.tweetCreatedAt).valueOf();
+      return Number.isFinite(publishedAt) && publishedAt <= now && now - publishedAt < 24 * 60 * 60 * 1000;
+    })
+    .sort((left, right) => new Date(right.tweetCreatedAt).valueOf() - new Date(left.tweetCreatedAt).valueOf())[0];
+
+export const hasActiveReset = (state: MonitorState, now = Date.now()): boolean =>
+  Boolean(getLatestActiveReset(state, now));
 
 export const recordMonitorError = async (kv: KVNamespace, error: unknown): Promise<void> => {
   const message = getErrorMessage(error, "Unknown monitor error");

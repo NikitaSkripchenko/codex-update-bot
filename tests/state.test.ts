@@ -1,4 +1,4 @@
-import { appendRecentDecision, createInitialMonitorState, hasActiveReset } from "../src/state";
+import { appendRecentDecision, createInitialMonitorState, getLatestActiveReset, hasActiveReset } from "../src/state";
 
 describe("state", () => {
   it("keeps bounded recent decisions and replaces decisions for the same tweet", () => {
@@ -73,5 +73,17 @@ describe("state", () => {
 
     expect(hasActiveReset(state, publishedAt + 23 * 60 * 60 * 1000)).toBe(true);
     expect(hasActiveReset(state, publishedAt + 24 * 60 * 60 * 1000)).toBe(false);
+  });
+
+  it("returns the most recent confirmed reset within the active window", () => {
+    const state = {
+      ...createInitialMonitorState(),
+      recentDecisions: [
+        { tweetId: "old", tweetUrl: "url-old", tweetCreatedAt: "2026-07-10T10:00:00.000Z", verdict: "reset_confirmed" as const, confidence: 0.9, rationale: "old", alertedAt: "", deliveryMode: "direct" as const },
+        { tweetId: "latest", tweetUrl: "url-latest", tweetCreatedAt: "2026-07-10T11:00:00.000Z", verdict: "reset_confirmed" as const, confidence: 0.9, rationale: "latest", alertedAt: "", deliveryMode: "direct" as const },
+      ],
+    };
+
+    expect(getLatestActiveReset(state, new Date("2026-07-10T12:00:00.000Z").valueOf())?.tweetId).toBe("latest");
   });
 });

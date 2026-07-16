@@ -42,7 +42,7 @@ describe("telegram", () => {
     expect(truncateForTelegram("abcdef", 5)).toBe("ab...");
   });
 
-  it("includes the latest monitored tweet text in status", () => {
+  it("reports an inactive reset status alongside the latest monitored post", () => {
     const text = formatStatusMessage({
       lastSeenTweetId: "1",
       lastSeenTweetUrl: "https://x.com/thsottiaux/status/1",
@@ -63,12 +63,16 @@ describe("telegram", () => {
       ],
     });
 
+    expect(text).toContain("<b>Reset status</b>: ❌ Inactive (no reset was confirmed within the last 24 hours)");
     expect(text).toContain("<b>Latest monitored post</b>");
     expect(text).toContain('href="https://x.com/thsottiaux/status/1"');
-    expect(text).toContain("latest cached tweet");
+    expect(text).not.toContain("latest cached tweet");
   });
 
-  it("keeps the latest monitored post without exposing the result history", () => {
+  it("shows the latest reset-confirming post", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T12:00:00.000Z"));
+
     const text = formatStatusMessage(
       {
         lastSeenTweetId: "newest",
@@ -106,10 +110,13 @@ describe("telegram", () => {
     expect(text).not.toContain("Today's results");
     expect(text).not.toContain("Delivery");
     expect(text).not.toContain("Last error");
-    expect(text).toContain("newest cached tweet");
+    expect(text).toContain("<b>Reset status</b>: ✅ Active (a reset was confirmed within the last 24 hours)");
+    expect(text).toContain("View confirming post");
+    expect(text).toContain("<b>Latest post verdict</b>: ✅ Reset confirmed");
+    vi.useRealTimers();
   });
 
-  it("distinguishes the latest post verdict from an earlier active reset", () => {
+  it("uses an earlier reset confirmation instead of a newer unrelated post", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-10T12:00:00.000Z"));
 
@@ -124,8 +131,10 @@ describe("telegram", () => {
       ],
     });
 
-    expect(text).toContain("<b>Latest post verdict</b>: ❌ Not reset");
-    expect(text).toContain("<b>Reset status</b>: Active (a reset was confirmed within the last 24 hours)");
+    expect(text).toContain("<b>Reset status</b>: ✅ Active (a reset was confirmed within the last 24 hours)");
+    expect(text).toContain("https://x.com/thsottiaux/status/reset");
+    expect(text).toContain("https://x.com/thsottiaux/status/newest");
+    expect(text).toContain("unrelated");
     vi.useRealTimers();
   });
 
