@@ -1,4 +1,5 @@
 import { splitCsv } from "./env";
+import { hasActiveReset } from "./state";
 import type { Classification, Env, MonitorState, Tweet } from "./types";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
@@ -91,6 +92,7 @@ const getLatestDecision = (state: MonitorState): MonitorState["recentDecisions"]
 
 export const formatStatusMessage = (state: MonitorState): string => {
   const latest = getLatestDecision(state);
+  const verdict = hasActiveReset(state);
 
   return truncateForTelegram(
     [
@@ -99,7 +101,7 @@ export const formatStatusMessage = (state: MonitorState): string => {
       "<b>Latest monitored post</b>",
       latest ? telegramLink(latest.tweetUrl, "View post") : state.lastSeenTweetUrl ? telegramLink(state.lastSeenTweetUrl, "View post") : "No post yet.",
       latest ? `<b>Posted</b>: ${escapeTelegramHtml(latest.tweetCreatedAt || "unknown")}` : null,
-      latest ? `<b>Verdict</b>: ${formatVerdictText(latest.verdict)} (${formatConfidence(latest.confidence)})` : "<b>Verdict</b>: none yet",
+      `<b>Verdict</b>: ${verdict}`,
       latest ? `<b>Why</b>: ${escapeTelegramHtml(latest.rationale)}` : null,
       latest?.tweetText ? "" : null,
       latest?.tweetText ? "<b>Original post</b>" : null,

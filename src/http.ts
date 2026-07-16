@@ -1,7 +1,7 @@
 import { getErrorMessage, isAuthorizedBearer, jsonResponse } from "./env";
 import { dashboardHtmlResponse, dashboardJsonResponse, dashboardReevaluateResponse } from "./dashboard";
 import { runMonitor } from "./monitor";
-import { readMonitorState } from "./state";
+import { hasActiveReset, readMonitorState } from "./state";
 import { getSubscriptionStats } from "./subscriptions";
 import { setTelegramCommands } from "./telegram";
 import { getTweetSourceDiagnostics } from "./tweets";
@@ -20,6 +20,7 @@ const publicHealth = async (env: Env): Promise<Response> => {
     lastCheckAt: state.lastCheckAt,
     lastSeenTweetUrl: state.lastSeenTweetUrl,
     hasLastError: Boolean(state.lastError),
+    verdict: hasActiveReset(state),
     recentDecisionCount: state.recentDecisions.length,
     subscriptions: stats,
   });

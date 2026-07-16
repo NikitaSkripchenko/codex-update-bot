@@ -1,4 +1,4 @@
-import { appendRecentDecision, createInitialMonitorState } from "../src/state";
+import { appendRecentDecision, createInitialMonitorState, hasActiveReset } from "../src/state";
 
 describe("state", () => {
   it("keeps bounded recent decisions and replaces decisions for the same tweet", () => {
@@ -51,5 +51,27 @@ describe("state", () => {
     expect(third.recentDecisions.map((entry) => entry.tweetId)).toEqual(["1", "2"]);
     expect(third.recentDecisions[0]?.tweetUrl).toBe("url-1b");
     expect(third.recentDecisions[0]?.verdict).toBe("reset_confirmed");
+  });
+
+  it("keeps the reset verdict true for 24 hours after a confirmed tweet is published", () => {
+    const publishedAt = new Date("2026-07-10T12:00:00.000Z").valueOf();
+    const state = {
+      ...createInitialMonitorState(),
+      recentDecisions: [
+        {
+          tweetId: "1",
+          tweetUrl: "url-1",
+          tweetCreatedAt: "2026-07-10T12:00:00.000Z",
+          verdict: "reset_confirmed" as const,
+          confidence: 0.9,
+          rationale: "confirmed",
+          alertedAt: "2026-07-10T12:00:01.000Z",
+          deliveryMode: "direct" as const,
+        },
+      ],
+    };
+
+    expect(hasActiveReset(state, publishedAt + 23 * 60 * 60 * 1000)).toBe(true);
+    expect(hasActiveReset(state, publishedAt + 24 * 60 * 60 * 1000)).toBe(false);
   });
 });

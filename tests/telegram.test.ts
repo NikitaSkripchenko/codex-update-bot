@@ -109,6 +109,25 @@ describe("telegram", () => {
     expect(text).toContain("newest cached tweet");
   });
 
+  it("keeps the status verdict true after a later non-reset tweet", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-10T12:00:00.000Z"));
+
+    const text = formatStatusMessage({
+      lastSeenTweetId: "newest",
+      lastSeenTweetUrl: "https://x.com/thsottiaux/status/newest",
+      lastCheckAt: "2026-07-10T12:00:00.000Z",
+      lastError: null,
+      recentDecisions: [
+        { tweetId: "newest", tweetUrl: "https://x.com/thsottiaux/status/newest", tweetCreatedAt: "2026-07-10T11:59:00.000Z", verdict: "not_reset", confidence: 0.9, rationale: "unrelated", alertedAt: "", deliveryMode: "cached" },
+        { tweetId: "reset", tweetUrl: "https://x.com/thsottiaux/status/reset", tweetCreatedAt: "2026-07-09T13:00:00.000Z", verdict: "reset_confirmed", confidence: 0.9, rationale: "confirmed", alertedAt: "", deliveryMode: "direct" },
+      ],
+    });
+
+    expect(text).toContain("<b>Verdict</b>: true");
+    vi.useRealTimers();
+  });
+
   it("formats help as predictable chat guidance", () => {
     const text = formatHelpMessage(false);
 
