@@ -1,6 +1,7 @@
 {
   "name": "codex-limit-telegram-bot",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
