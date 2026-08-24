@@ -1,4 +1,5 @@
 import { splitCsv } from "./env";
+import { isOpenRouterFallbackRationale } from "./classifier";
 import { getLatestActiveReset } from "./state";
 import type { Classification, Env, MonitorState, Tweet } from "./types";
 
@@ -70,6 +71,15 @@ const formatVerdict = (classification: Classification): string => formatVerdictT
 
 const formatConfidence = (confidence: number): string => `${Math.round(confidence * 100)}%`;
 
+const formatPublicRationale = (rationale: string): string => {
+  if (!isOpenRouterFallbackRationale(rationale)) {
+    return rationale;
+  }
+
+  const separatorIndex = rationale.indexOf("; ");
+  return separatorIndex >= 0 ? rationale.slice(separatorIndex + 2) : rationale;
+};
+
 const formatResetStatus = (isActive: boolean): string =>
   isActive
     ? "✅ Active (a reset was confirmed within the last 24 hours)"
@@ -81,7 +91,7 @@ export const formatAlertMessage = (tweet: Tweet, classification: Classification)
       "<b>Codex limit reset</b>",
       "",
       telegramQuote(`${formatVerdict(classification)}\n${formatConfidence(classification.confidence)} confidence`),
-      `<b>Why it matters</b>\n${escapeTelegramHtml(classification.rationale)}`,
+      `<b>Why it matters</b>\n${escapeTelegramHtml(formatPublicRationale(classification.rationale))}`,
       "",
       "<b>Next step</b>\nOpen Codex or ChatGPT and retry the blocked task.",
       telegramLink(tweet.url, `View post from @${tweet.authorUsername}`),
@@ -113,7 +123,7 @@ export const formatStatusMessage = (state: MonitorState): string => {
       latest ? telegramLink(latest.tweetUrl, "View post") : state.lastSeenTweetUrl ? telegramLink(state.lastSeenTweetUrl, "View post") : "No post yet.",
       latest ? `<b>Posted</b>: ${escapeTelegramHtml(latest.tweetCreatedAt || "unknown")}` : null,
       latest ? `<b>Latest post verdict</b>: ${escapeTelegramHtml(formatVerdictText(latest.verdict))}` : null,
-      latest ? `<b>Why</b>: ${escapeTelegramHtml(latest.rationale)}` : null,
+      latest ? `<b>Why</b>: ${escapeTelegramHtml(formatPublicRationale(latest.rationale))}` : null,
     ]
       .filter((line): line is string => line !== null)
       .join("\n"),

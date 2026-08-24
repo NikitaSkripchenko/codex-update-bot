@@ -260,6 +260,55 @@ describe("http dashboard", () => {
     expect(state.recentDecisions[0]?.rationale).toBe("Original decision.");
   });
 
+  it("does not save or dispatch a network-error heuristic reevaluation", async () => {
+    const env = {
+      ...createEnv(),
+      OPENROUTER_API_KEY: "openrouter-key",
+    };
+    await writeMonitorState(env.MONITOR_STATE, {
+      lastSeenTweetId: "1",
+      lastSeenTweetUrl: "https://x.com/thsottiaux/status/1",
+      lastCheckAt: "2026-07-10T12:00:00.000Z",
+      lastError: null,
+      recentDecisions: [
+        {
+          tweetId: "1",
+          tweetUrl: "https://x.com/thsottiaux/status/1",
+          tweetCreatedAt: "2026-07-10T11:58:00.000Z",
+          tweetText: "Reset has been propagated to accounts.",
+          verdict: "not_reset",
+          confidence: 0.2,
+          rationale: "Original decision.",
+          alertedAt: "2026-07-10T12:00:01.000Z",
+          deliveryMode: "cached",
+        },
+      ],
+    });
+    const dispatch = vi.fn(async () => ({ mode: "queued" as const, queuedCount: 2 }));
+
+    const response = await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        body: JSON.stringify({ tweetId: "1" }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+      env,
+      {
+        classify: async () => ({
+          verdict: "reset_confirmed",
+          confidence: 0.66,
+          rationale: "OpenRouter unavailable after a network error; The post explicitly says limits were reset.",
+        }),
+        dispatch,
+      },
+    );
+    const state = await readMonitorState(env.MONITOR_STATE);
+
+    expect(response.status).toBe(503);
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(state.recentDecisions[0]?.rationale).toBe("Original decision.");
+  });
+
   it("dispatches an alert only when reevaluation changes a decision to reset", async () => {
     const env = {
       ...createEnv(),

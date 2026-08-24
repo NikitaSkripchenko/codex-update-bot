@@ -38,6 +38,29 @@ describe("telegram", () => {
     expect(text.length).toBeLessThanOrEqual(3900);
   });
 
+  it("hides provider diagnostics from heuristic fallback alerts", () => {
+    const text = formatAlertMessage(
+      {
+        id: "1",
+        url: "https://x.com/thsottiaux/status/1",
+        createdAt: "2026-07-07T12:00:00.000Z",
+        fullText: "Reset has been propagated to accounts.",
+        authorUsername: "thsottiaux",
+        isRetweet: false,
+        isReply: false,
+      },
+      {
+        verdict: "reset_confirmed",
+        confidence: 0.62,
+        rationale:
+          "OpenRouter returned an empty classification response; The quoted post explicitly says limits were reset.",
+      },
+    );
+
+    expect(text).toContain("The quoted post explicitly says limits were reset.");
+    expect(text).not.toContain("OpenRouter returned");
+  });
+
   it("truncates long strings", () => {
     expect(truncateForTelegram("abcdef", 5)).toBe("ab...");
   });

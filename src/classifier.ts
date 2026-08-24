@@ -4,6 +4,14 @@ import type { Classification, ClassificationVerdict, Env, Tweet } from "./types"
 const OPENROUTER_CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const DEFAULT_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free";
 const MAX_RATIONALE_LENGTH = 120;
+const MAX_CLASSIFICATION_ATTEMPTS = 3;
+const BASE_RETRY_DELAY_MS = 500;
+const MAX_RETRY_AFTER_MS = 5_000;
+
+export type ClassifierRuntime = {
+  random?: () => number;
+  sleep?: (delayMs: number) => Promise<void>;
+};
 
 export const classificationInstructions = `
 You classify tweets from monitored X/Twitter accounts about whether Codex or ChatGPT rate limits have reset.
@@ -52,6 +60,10 @@ const hasExplicitResetLanguage = (value: string): boolean => {
     return false;
   }
 
+  if (/\breset has been propagated to accounts\b/.test(text)) {
+    return true;
+  }
+
   return (
     /\b(limit|limits|rate limit|rate limits|cap|caps)\b/.test(text) &&
     (/\breset\b/.test(text) ||
@@ -92,6 +104,9 @@ const getFallbackRationale = (verdict: ClassificationVerdict): string => {
 
 const isClassificationVerdict = (value: unknown): value is ClassificationVerdict =>
   value === "reset_confirmed" || value === "not_reset" || value === "uncertain";
+
+export const isOpenRouterFallbackRationale = (rationale: string): boolean =>
+  rationale.startsWith("OpenRouter returned") || rationale.startsWith("OpenRouter unavailable");
 
 const hasLimitOrResetLanguage = (value: string): boolean => {
   const text = normalizeWhitespace(value).toLowerCase();
@@ -149,7 +164,7 @@ export const classifyTweetHeuristically = (tweet: Tweet, reasonPrefix = "OpenRou
   if (hasExplicitResetLanguage(mainText) && !isFutureResetDiscussion(mainText)) {
     return normalizeClassification(tweet, {
       confidence: 0.66,
-      rationale: `${reasonPrefix}; heuristic saw explicit reset language in the tweet.`,
+      rationale: `${reasonPrefix}; The post explicitly says limits were reset.`,
       verdict: "reset_confirmed",
     });
   }
@@ -157,7 +172,7 @@ export const classifyTweetHeuristically = (tweet: Tweet, reasonPrefix = "OpenRou
   if (hasExplicitResetLanguage(quotedText)) {
     return normalizeClassification(tweet, {
       confidence: 0.62,
-      rationale: `${reasonPrefix}; heuristic saw explicit reset language in the quoted post.`,
+      rationale: `${reasonPrefix}; The quoted post explicitly says limits were reset.`,
       verdict: "reset_confirmed",
     });
   }
@@ -165,16 +180,51 @@ export const classifyTweetHeuristically = (tweet: Tweet, reasonPrefix = "OpenRou
   if (hasLimitOrResetLanguage(mainText) || hasLimitOrResetLanguage(quotedText)) {
     return normalizeClassification(tweet, {
       confidence: 0.35,
-      rationale: `${reasonPrefix}; heuristic saw possible limit/reset language, but no explicit reset.`,
+      rationale: `${reasonPrefix}; The post mentions limits or a reset, but does not clearly confirm one.`,
       verdict: "uncertain",
     });
   }
 
   return normalizeClassification(tweet, {
     confidence: 0.5,
-    rationale: `${reasonPrefix}; heuristic found no explicit reset language.`,
+    rationale: `${reasonPrefix}; The post does not contain explicit reset evidence.`,
     verdict: "not_reset",
   });
+};
+
+const defaultSleep = async (delayMs: number): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+};
+
+const getRetryAfterMs = (response: Response): number | null => {
+  const header = response.headers.get("retry-after")?.trim();
+
+  if (!header) {
+    return null;
+  }
+
+  const seconds = Number(header);
+  const delayMs = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : new Date(header).valueOf() - Date.now();
+
+  if (!Number.isFinite(delayMs) || delayMs < 0) {
+    return null;
+  }
+
+  return Math.min(delayMs, MAX_RETRY_AFTER_MS);
+};
+
+const getRetryDelayMs = (retryIndex: number, response: Response | null, random: () => number): number => {
+  const retryAfterMs = response ? getRetryAfterMs(response) : null;
+
+  if (retryAfterMs !== null) {
+    return retryAfterMs;
+  }
+
+  const baseDelayMs = BASE_RETRY_DELAY_MS * 2 ** retryIndex;
+  const jitterMs = Math.floor(baseDelayMs * 0.5 * Math.max(0, Math.min(1, random())));
+  return baseDelayMs + jitterMs;
 };
 
 export const extractJsonObjectText = (value: string): string => {
@@ -266,6 +316,7 @@ export const classifyTweet = async (
   env: Env,
   tweet: Tweet,
   fetchFn: typeof fetch = fetch,
+  runtime: ClassifierRuntime = {},
 ): Promise<Classification> => {
   const apiKey = getEnvString(env.OPENROUTER_API_KEY);
   const model = getEnvString(env.OPENROUTER_MODEL, DEFAULT_MODEL);
@@ -289,7 +340,7 @@ export const classifyTweet = async (
     headers["x-title"] = appName;
   }
 
-  const response = await fetchFn(OPENROUTER_CHAT_COMPLETIONS_URL, {
+  const requestInit: RequestInit = {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -322,48 +373,73 @@ export const classifyTweet = async (
       response_format: { type: "json_object" },
       temperature: 0,
     }),
-  });
+  };
+  const random = runtime.random || Math.random;
+  const sleep = runtime.sleep || defaultSleep;
+  let lastData: any;
+  let lastFailureReason = "OpenRouter unavailable";
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    if ([429, 503, 529].includes(response.status)) {
-      return classifyTweetWithFallback(tweet, `OpenRouter returned ${response.status}`, model);
+  for (let attempt = 0; attempt < MAX_CLASSIFICATION_ATTEMPTS; attempt += 1) {
+    let response: Response | null = null;
+
+    try {
+      response = await fetchFn(OPENROUTER_CHAT_COMPLETIONS_URL, requestInit);
+    } catch (_error) {
+      lastFailureReason = "OpenRouter unavailable after a network error";
     }
 
-    throw new Error(`OpenRouter classification failed with ${response.status}: ${errorText.slice(0, 240)}`);
+    if (response && !response.ok) {
+      const retryable = [429, 503, 529].includes(response.status);
+
+      if (!retryable) {
+        const errorText = await response.text();
+        throw new Error(`OpenRouter classification failed with ${response.status}: ${errorText.slice(0, 240)}`);
+      }
+
+      lastFailureReason = `OpenRouter returned ${response.status}`;
+    } else if (response) {
+      const data = await response.json().catch(() => null) as any;
+      lastData = data;
+
+      if (!data) {
+        lastFailureReason = "OpenRouter returned invalid JSON";
+      } else {
+        const outputText = extractResponseText(data);
+
+        if (!outputText) {
+          lastFailureReason = "OpenRouter returned an empty classification response";
+        } else {
+          const jsonText = extractJsonObjectText(outputText);
+
+          if (!jsonText) {
+            lastFailureReason = "OpenRouter returned a non-JSON classification response";
+          } else {
+            try {
+              const parsed = JSON.parse(jsonText) as Partial<Classification>;
+
+              if (!isClassificationVerdict(parsed.verdict)) {
+                lastFailureReason = "OpenRouter returned an invalid classification verdict";
+              } else {
+                return normalizeClassification(tweet, {
+                  confidence: parsed.confidence,
+                  model,
+                  rationale: parsed.rationale,
+                  usage: getUsage(data),
+                  verdict: parsed.verdict,
+                });
+              }
+            } catch (_error) {
+              lastFailureReason = "OpenRouter returned invalid classification JSON";
+            }
+          }
+        }
+      }
+    }
+
+    if (attempt < MAX_CLASSIFICATION_ATTEMPTS - 1) {
+      await sleep(getRetryDelayMs(attempt, response, random));
+    }
   }
 
-  const data = await response.json().catch(() => null) as any;
-
-  if (!data) {
-    return classifyTweetWithFallback(tweet, "OpenRouter returned invalid JSON", model);
-  }
-
-  const outputText = extractResponseText(data);
-
-  if (!outputText) {
-    return classifyTweetWithFallback(tweet, "OpenRouter returned an empty classification response", model, data);
-  }
-
-  const jsonText = extractJsonObjectText(outputText);
-
-  if (!jsonText) {
-    return classifyTweetWithFallback(tweet, "OpenRouter returned a non-JSON classification response", model, data);
-  }
-
-  let parsed: Partial<Classification>;
-
-  try {
-    parsed = JSON.parse(jsonText) as Partial<Classification>;
-  } catch (_error) {
-    return classifyTweetWithFallback(tweet, "OpenRouter returned invalid classification JSON", model, data);
-  }
-
-  return normalizeClassification(tweet, {
-    confidence: parsed.confidence,
-    model,
-    rationale: parsed.rationale,
-    usage: getUsage(data),
-    verdict: parsed.verdict,
-  });
+  return classifyTweetWithFallback(tweet, lastFailureReason, model, lastData);
 };

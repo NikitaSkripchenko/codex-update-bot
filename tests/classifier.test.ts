@@ -137,6 +137,10 @@ describe("classifier", () => {
         new Response(JSON.stringify({ error: { message: "rate limited" } }), {
           status: 429,
         })) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async () => undefined,
+      },
     );
 
     expect(classification.verdict).toBe("uncertain");
@@ -144,6 +148,8 @@ describe("classifier", () => {
   });
 
   it("falls back to a conservative heuristic when OpenRouter returns empty content", async () => {
+    const requests: Request[] = [];
+    const delays: number[] = [];
     const classification = await classifyTweet(
       {
         MONITOR_STATE: {} as KVNamespace,
@@ -155,8 +161,9 @@ describe("classifier", () => {
         fullText: "Random product update unrelated to limits.",
         quotedText: null,
       },
-      (async () =>
-        new Response(
+      (async (input, init) => {
+        requests.push(new Request(input, init));
+        return new Response(
           JSON.stringify({
             choices: [{ message: { content: "" } }],
             usage: {
@@ -165,13 +172,250 @@ describe("classifier", () => {
               total_tokens: 10,
             },
           }),
-        )) as typeof fetch,
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async (delayMs) => {
+          delays.push(delayMs);
+        },
+      },
     );
 
     expect(classification.verdict).toBe("uncertain");
     expect(classification.rationale).toContain("OpenRouter returned an empty classification response");
     expect(classification.model).toBe("test/free-model:free");
     expect(classification.usage?.totalTokens).toBe(10);
+    expect(requests).toHaveLength(3);
+    expect(delays).toEqual([500, 1000]);
+  });
+
+  it("retries empty model output and uses the next valid classification", async () => {
+    let attempt = 0;
+    const delays: number[] = [];
+
+    const classification = await classifyTweet(
+      {
+        MONITOR_STATE: {} as KVNamespace,
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      tweet,
+      (async () => {
+        attempt += 1;
+        return new Response(
+          JSON.stringify(
+            attempt === 1
+              ? { choices: [{ message: { content: "" } }] }
+              : {
+                  choices: [
+                    {
+                      message: {
+                        content:
+                          '{"verdict":"reset_confirmed","confidence":0.94,"rationale":"The quoted post confirms the reset."}',
+                      },
+                    },
+                  ],
+                },
+          ),
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async (delayMs) => {
+          delays.push(delayMs);
+        },
+      },
+    );
+
+    expect(classification).toMatchObject({
+      verdict: "reset_confirmed",
+      confidence: 0.94,
+      rationale: "Quoted post confirms limits already reset; this post discusses the next reset.",
+    });
+    expect(attempt).toBe(2);
+    expect(delays).toEqual([500]);
+  });
+
+  it("honors Retry-After with a five-second cap", async () => {
+    let attempt = 0;
+    const delays: number[] = [];
+
+    const classification = await classifyTweet(
+      {
+        MONITOR_STATE: {} as KVNamespace,
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      tweet,
+      (async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+            status: 429,
+            headers: { "retry-after": "30" },
+          });
+        }
+
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '{"verdict":"not_reset","confidence":0.9,"rationale":"No reset signal."}',
+                },
+              },
+            ],
+          }),
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async (delayMs) => {
+          delays.push(delayMs);
+        },
+      },
+    );
+
+    expect(classification.verdict).toBe("not_reset");
+    expect(attempt).toBe(2);
+    expect(delays).toEqual([5000]);
+  });
+
+  it.each([503, 529])("retries OpenRouter status %i", async (status) => {
+    let attempt = 0;
+
+    const classification = await classifyTweet(
+      {
+        MONITOR_STATE: {} as KVNamespace,
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      tweet,
+      (async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return new Response(JSON.stringify({ error: { message: "temporarily unavailable" } }), { status });
+        }
+
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '{"verdict":"not_reset","confidence":0.9,"rationale":"No reset signal."}',
+                },
+              },
+            ],
+          }),
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(classification.verdict).toBe("not_reset");
+    expect(attempt).toBe(2);
+  });
+
+  it("does not retry an authentication failure", async () => {
+    let attempt = 0;
+    const delays: number[] = [];
+
+    await expect(
+      classifyTweet(
+        {
+          MONITOR_STATE: {} as KVNamespace,
+          OPENROUTER_API_KEY: "invalid-key",
+        },
+        tweet,
+        (async () => {
+          attempt += 1;
+          return new Response(JSON.stringify({ error: { message: "unauthorized" } }), { status: 401 });
+        }) as typeof fetch,
+        {
+          random: () => 0,
+          sleep: async (delayMs) => {
+            delays.push(delayMs);
+          },
+        },
+      ),
+    ).rejects.toThrow("OpenRouter classification failed with 401");
+
+    expect(attempt).toBe(1);
+    expect(delays).toEqual([]);
+  });
+
+  it("retries a transient network failure", async () => {
+    let attempt = 0;
+
+    const classification = await classifyTweet(
+      {
+        MONITOR_STATE: {} as KVNamespace,
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      tweet,
+      (async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          throw new TypeError("network unavailable");
+        }
+
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: '{"verdict":"not_reset","confidence":0.9,"rationale":"No reset signal."}',
+                },
+              },
+            ],
+          }),
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(classification.verdict).toBe("not_reset");
+    expect(attempt).toBe(2);
+  });
+
+  it("retries a JSON classification with an invalid verdict", async () => {
+    let attempt = 0;
+
+    const classification = await classifyTweet(
+      {
+        MONITOR_STATE: {} as KVNamespace,
+        OPENROUTER_API_KEY: "openrouter-key",
+      },
+      tweet,
+      (async () => {
+        attempt += 1;
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    attempt === 1
+                      ? '{"verdict":"yes","confidence":0.9,"rationale":"Reset."}'
+                      : '{"verdict":"not_reset","confidence":0.9,"rationale":"No reset signal."}',
+                },
+              },
+            ],
+          }),
+        );
+      }) as typeof fetch,
+      {
+        random: () => 0,
+        sleep: async () => undefined,
+      },
+    );
+
+    expect(classification.verdict).toBe("not_reset");
+    expect(attempt).toBe(2);
   });
 
   it("heuristic confirms explicit current reset language", () => {
@@ -182,6 +426,18 @@ describe("classifier", () => {
     });
 
     expect(classification.verdict).toBe("reset_confirmed");
+  });
+
+  it("heuristic confirms a reset propagated to accounts", () => {
+    const classification = classifyTweetHeuristically({
+      ...tweet,
+      fullText:
+        "Good Sunday. Reset has been propagated to accounts and we landed some fixes to usage. You should feel a positive difference.",
+      quotedText: null,
+    });
+
+    expect(classification.verdict).toBe("reset_confirmed");
+    expect(classification.rationale).toContain("The post explicitly says limits were reset.");
   });
 
   it("heuristic stays conservative for announced reset windows", () => {

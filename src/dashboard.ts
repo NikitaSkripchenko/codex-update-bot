@@ -1,4 +1,4 @@
-import { classifyTweet } from "./classifier";
+import { classifyTweet, isOpenRouterFallbackRationale } from "./classifier";
 import { dispatchAlert, dispatchSubscriberAlertNow } from "./delivery-queue";
 import { getEnvString, isPublicSubscriptionsEnabled, jsonResponse } from "./env";
 import { appendRecentDecision, patchMonitorState, readMonitorState } from "./state";
@@ -132,7 +132,7 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
   const tweet = decisionToTweet(latestDecision);
   const classification = await (deps.classify || classifyTweet)(env, tweet);
 
-  if (classification.rationale.startsWith("OpenRouter returned")) {
+  if (isOpenRouterFallbackRationale(classification.rationale)) {
     return jsonResponse(
       {
         ok: false,

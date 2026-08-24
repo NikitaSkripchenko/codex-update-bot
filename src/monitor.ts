@@ -1,4 +1,4 @@
-import { classifyTweet } from "./classifier";
+import { classifyTweet, isOpenRouterFallbackRationale } from "./classifier";
 import { getEnvString, getNumberEnv, getTargetUsernames, isPublicSubscriptionsEnabled } from "./env";
 import { dispatchAlert } from "./delivery-queue";
 import {
@@ -94,7 +94,7 @@ const shouldRefreshCachedDecision = (decision: MonitorState["recentDecisions"][n
     return true;
   }
 
-  return decision.rationale.startsWith("OpenRouter returned") || decision.rationale.startsWith("OpenRouter unavailable");
+  return isOpenRouterFallbackRationale(decision.rationale);
 };
 
 const shouldDispatchAlert = (classification: Classification): boolean => classification.verdict === "reset_confirmed";
