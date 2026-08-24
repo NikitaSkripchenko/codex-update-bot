@@ -1,9 +1,12 @@
-import { getEnvString, getNumberEnv, getTargetUsernames, splitCsv } from "./env";
+import { getEnvString, getErrorMessage, getNumberEnv, getTargetUsernames, splitCsv } from "./env";
 import type { Env, Tweet } from "./types";
 
 const DEFAULT_SEARCH_BATCH_SIZE = 20;
 const DEFAULT_LOOKBACK_HOURS = 24;
 const DEFAULT_NITTER_BASE_URL = "https://nitter.net";
+const NITTER_REQUEST_TIMEOUT_MS = 5_000;
+const NITTER_RETRY_DELAY_MS = 500;
+const MAX_NITTER_RETRY_AFTER_MS = 5_000;
 const FALLBACK_NITTER_BASE_URLS = [
   DEFAULT_NITTER_BASE_URL,
   "https://xcancel.com",
@@ -18,7 +21,7 @@ const FALLBACK_NITTER_BASE_URLS = [
 
 type AnyRecord = Record<string, any>;
 
-let rettiwtModulePromise: Promise<{ Rettiwt: new (config?: { apiKey?: string }) => any }> | null = null;
+let rettiwtModulePromise: Promise<{ Rettiwt: new (config?: { apiKey?: string; timeout?: number }) => any }> | null = null;
 
 export const compareTweetIds = (left: string, right: string): number => {
   try {
@@ -179,18 +182,55 @@ export const parseNitterRssTweets = (rss: string, targetUsername: string): Tweet
     .filter((tweet): tweet is Tweet => tweet !== null);
 };
 
-const fetchNitterRssText = async (baseUrl: string, targetUsername: string): Promise<Response> =>
-  fetch(`${baseUrl}/${targetUsername}/rss`, {
-    headers: {
-      accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
-      "user-agent": "codex-limit-telegram-bot/1.0 (+https://workers.cloudflare.com)",
-    },
-  });
+const getNitterRetryDelayMs = (response: Response): number => {
+  const retryAfterHeader = response.headers.get("retry-after");
+  const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
+  return Number.isFinite(retryAfter) && retryAfter >= 0
+    ? Math.min(retryAfter * 1_000, MAX_NITTER_RETRY_AFTER_MS)
+    : NITTER_RETRY_DELAY_MS;
+};
+
+const sleep = async (delayMs: number): Promise<void> => {
+  await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+};
+
+const fetchNitterRssText = async (
+  baseUrl: string,
+  targetUsername: string,
+  retryTransient = false,
+): Promise<Response> => {
+  const attempts = retryTransient ? 2 : 1;
+  let lastResponse: Response | null = null;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await fetch(`${baseUrl}/${targetUsername}/rss`, {
+      signal: AbortSignal.timeout(NITTER_REQUEST_TIMEOUT_MS),
+      headers: {
+        accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8",
+        "user-agent": "codex-limit-telegram-bot/1.0 (+https://workers.cloudflare.com)",
+      },
+    });
+    lastResponse = response;
+
+    if (![429, 500, 502, 503, 504].includes(response.status) || attempt === attempts - 1) {
+      return response;
+    }
+
+    await sleep(getNitterRetryDelayMs(response));
+  }
+
+  if (!lastResponse) {
+    throw new Error(`Nitter did not return a response for @${targetUsername}`);
+  }
+
+  return lastResponse;
+};
 
 export const getTweetSourceDiagnostics = async (env: Env): Promise<Record<string, unknown>> => {
   const targetUsernames = getTargetUsernames(env);
   const startDate = getRecentTweetSearchStartDate(env);
   const baseUrls = getNitterBaseUrls(env);
+  const configuredBaseUrls = new Set(splitCsv(env.NITTER_BASE_URL).map(normalizeBaseUrl));
   const attempts: Record<string, unknown>[] = [];
 
   for (const targetUsername of targetUsernames) {
@@ -198,7 +238,7 @@ export const getTweetSourceDiagnostics = async (env: Env): Promise<Record<string
       const nitterUrl = `${baseUrl}/${targetUsername}/rss`;
 
       try {
-        const response = await fetchNitterRssText(baseUrl, targetUsername);
+        const response = await fetchNitterRssText(baseUrl, targetUsername, configuredBaseUrls.has(baseUrl));
         const body = await response.text();
         const parsedTweets = parseNitterRssTweets(body, targetUsername);
         const filteredTweets = filterTweetsByStartDate(parsedTweets, startDate);
@@ -363,9 +403,11 @@ const getRecentTweetSearchStartDate = (env: Env): Date => {
   return new Date(Date.now() - lookbackHours * 60 * 60 * 1000);
 };
 
-const getRettiwt = async (): Promise<{ Rettiwt: new (config?: { apiKey?: string }) => any }> => {
+const getRettiwt = async (): Promise<{ Rettiwt: new (config?: { apiKey?: string; timeout?: number }) => any }> => {
   if (!rettiwtModulePromise) {
-    rettiwtModulePromise = import("rettiwt-api") as Promise<{ Rettiwt: new (config?: { apiKey?: string }) => any }>;
+    rettiwtModulePromise = import("rettiwt-api") as Promise<{
+      Rettiwt: new (config?: { apiKey?: string; timeout?: number }) => any;
+    }>;
   }
 
   return rettiwtModulePromise;
@@ -405,9 +447,11 @@ const fetchFromProviderUrl = async (env: Env, startDate: Date): Promise<Tweet[]>
 };
 
 const fetchNitterRssForUsername = async (env: Env, targetUsername: string): Promise<Tweet[]> => {
+  const configuredBaseUrls = new Set(splitCsv(env.NITTER_BASE_URL).map(normalizeBaseUrl));
+
   for (const baseUrl of getNitterBaseUrls(env)) {
     try {
-      const response = await fetchNitterRssText(baseUrl, targetUsername);
+      const response = await fetchNitterRssText(baseUrl, targetUsername, configuredBaseUrls.has(baseUrl));
 
       if (!response.ok) {
         continue;
@@ -459,7 +503,13 @@ const resolveTargetUserId = async (rettiwt: any, env: Env, targetUsername: strin
   return userId;
 };
 
-const fetchFromRettiwtForUsername = async (rettiwt: any, env: Env, targetUsername: string, startDate: Date): Promise<Tweet[]> => {
+const fetchFromRettiwtForUsername = async (
+  rettiwt: any,
+  env: Env,
+  targetUsername: string,
+  startDate: Date,
+  fallBackOnPartialFailure = false,
+): Promise<Tweet[]> => {
   const results: unknown[] = [];
   const errors: unknown[] = [];
   let fulfilledRequestCount = 0;
@@ -500,7 +550,15 @@ const fetchFromRettiwtForUsername = async (rettiwt: any, env: Env, targetUsernam
 
   const tweets = normalizeTweets(results.flatMap(normalizeBatch), targetUsername, startDate);
 
-  if (tweets.length > 0 || fulfilledRequestCount > 0 || errors.length === 0) {
+  if (tweets.length > 0) {
+    return tweets;
+  }
+
+  if (fallBackOnPartialFailure && errors.length > 0) {
+    throw new Error(`Rettiwt authenticated fetch was incomplete: ${errors.map((error) => getErrorMessage(error)).join("; ")}`);
+  }
+
+  if (fulfilledRequestCount > 0 || errors.length === 0) {
     return tweets;
   }
 
@@ -510,9 +568,27 @@ const fetchFromRettiwtForUsername = async (rettiwt: any, env: Env, targetUsernam
 const fetchFromRettiwt = async (env: Env, startDate: Date): Promise<Tweet[]> => {
   const apiKey = getEnvString(env.RETTIWT_API_KEY);
   const { Rettiwt } = await getRettiwt();
-  const rettiwt = apiKey ? new Rettiwt({ apiKey }) : new Rettiwt();
+  const rettiwt = new Rettiwt({ ...(apiKey ? { apiKey } : {}), timeout: 15_000 });
+  const guestRettiwt = apiKey ? new Rettiwt({ timeout: 15_000 }) : null;
+  const targetUsernames = getTargetUsernames(env);
   const responses = await Promise.allSettled(
-    getTargetUsernames(env).map((targetUsername) => fetchFromRettiwtForUsername(rettiwt, env, targetUsername, startDate)),
+    targetUsernames.map(async (targetUsername) => {
+      try {
+        return await fetchFromRettiwtForUsername(rettiwt, env, targetUsername, startDate, Boolean(apiKey));
+      } catch (authenticatedError) {
+        if (!guestRettiwt) {
+          throw authenticatedError;
+        }
+
+        try {
+          return await fetchFromRettiwtForUsername(guestRettiwt, env, targetUsername, startDate);
+        } catch (guestError) {
+          throw new Error(
+            `@${targetUsername}: configured auth failed (${getErrorMessage(authenticatedError)}); guest auth failed (${getErrorMessage(guestError)})`,
+          );
+        }
+      }
+    }),
   );
   const tweets = responses
     .filter((response): response is PromiseFulfilledResult<Tweet[]> => response.status === "fulfilled")
@@ -522,7 +598,13 @@ const fetchFromRettiwt = async (env: Env, startDate: Date): Promise<Tweet[]> => 
     return dedupeTweetsById(tweets);
   }
 
-  throw new Error("Rettiwt tweet fetch failed for all target usernames");
+  const failures = responses
+    .map((response, index) => response.status === "rejected"
+      ? `@${targetUsernames[index]}: ${getErrorMessage(response.reason)}`
+      : null)
+    .filter((failure): failure is string => Boolean(failure));
+
+  throw new Error(`Rettiwt tweet fetch failed for all target usernames: ${failures.join("; ")}`);
 };
 
 const fetchTweetsSince = async (env: Env, startDate: Date): Promise<Tweet[]> => {

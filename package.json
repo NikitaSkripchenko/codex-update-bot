@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free --var PUBLIC_SUBSCRIPTIONS_ENABLED:true",
+    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free --var PUBLIC_SUBSCRIPTIONS_ENABLED:true --var TARGET_USERNAMES:thsottiaux,sama --var NITTER_BASE_URL:https://nt.vern.cc,https://nitter.net",
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

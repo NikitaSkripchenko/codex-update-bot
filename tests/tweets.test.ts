@@ -1,4 +1,44 @@
-import { compareTweetIds, getUnseenTweets, normalizeTweets, parseNitterRssTweets } from "../src/tweets";
+import { compareTweetIds, fetchRecentTweets, getUnseenTweets, normalizeTweets, parseNitterRssTweets } from "../src/tweets";
+
+const rettiwtMockState = vi.hoisted(() => ({ authenticatedSearchSucceeds: false }));
+
+vi.mock("rettiwt-api", () => ({
+  Rettiwt: class {
+    tweet: { search: () => Promise<unknown> };
+    user: {
+      details: () => Promise<{ id: string }>;
+      timeline: () => Promise<{ list: unknown[] }>;
+      replies: () => Promise<never>;
+    };
+
+    constructor(config?: { apiKey?: string }) {
+      const authenticated = Boolean(config?.apiKey);
+      this.tweet = {
+        search: async () => authenticated && rettiwtMockState.authenticatedSearchSucceeds
+          ? { list: [] }
+          : Promise.reject(new Error(authenticated ? "Configured Rettiwt key rejected" : "Guest search unavailable")),
+      };
+      this.user = {
+        details: async () => authenticated
+          ? Promise.reject(new Error("Configured Rettiwt key rejected"))
+          : { id: "123" },
+        timeline: async () => authenticated
+          ? Promise.reject(new Error("Configured Rettiwt key rejected"))
+          : {
+              list: [
+                {
+                  id: "2091688655828246890",
+                  fullText: "Reset has been propagated to accounts.",
+                  createdAt: "2026-08-24T00:46:51.000Z",
+                  tweetBy: { userName: "thsottiaux" },
+                },
+              ],
+            },
+        replies: async () => Promise.reject(new Error(authenticated ? "Configured Rettiwt key rejected" : "Guest replies unavailable")),
+      };
+    }
+  },
+}));
 
 describe("tweets", () => {
   it("compares snowflake IDs numerically", () => {
@@ -95,5 +135,78 @@ describe("tweets", () => {
     );
 
     expect(tweets).toEqual([]);
+  });
+
+  it("retries a preferred Nitter host after a transient response", async () => {
+    const calls: Array<{ url: string; signal: AbortSignal | null | undefined }> = [];
+    const createdAt = new Date().toUTCString();
+
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, signal: init?.signal });
+      const preferredAttempts = calls.filter((call) => call.url.startsWith("https://preferred.test/")).length;
+
+      if (url.startsWith("https://preferred.test/") && preferredAttempts === 1) {
+        return new Response("rate limited", { status: 429, headers: { "retry-after": "0" } });
+      }
+
+      return new Response(
+        `<?xml version="1.0"?><rss><channel><item><title>Reset landed.</title><description>Reset landed.</description><pubDate>${createdAt}</pubDate><guid isPermaLink="false">2091688655828246890</guid><link>${url.replace(/\/rss$/, "/status/2091688655828246890#m")}</link></item></channel></rss>`,
+        { status: 200, headers: { "content-type": "application/rss+xml" } },
+      );
+    }));
+
+    try {
+      const tweets = await fetchRecentTweets({
+        MONITOR_STATE: {} as KVNamespace,
+        NITTER_BASE_URL: "https://preferred.test",
+        TARGET_USERNAMES: "thsottiaux",
+      });
+
+      expect(tweets).toHaveLength(1);
+      expect(calls.filter((call) => call.url.startsWith("https://preferred.test/"))).toHaveLength(2);
+      expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("falls back to Rettiwt guest timeline when the configured key fails", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 404 })));
+
+    try {
+      const tweets = await fetchRecentTweets({
+        MONITOR_STATE: {} as KVNamespace,
+        RETTIWT_API_KEY: "stale-key",
+        TARGET_USERNAMES: "thsottiaux",
+      });
+
+      expect(tweets).toHaveLength(1);
+      expect(tweets[0]).toMatchObject({
+        authorUsername: "thsottiaux",
+        id: "2091688655828246890",
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("uses the guest timeline after a partial authenticated Rettiwt failure", async () => {
+    rettiwtMockState.authenticatedSearchSucceeds = true;
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("unavailable", { status: 404 })));
+
+    try {
+      const tweets = await fetchRecentTweets({
+        MONITOR_STATE: {} as KVNamespace,
+        RETTIWT_API_KEY: "stale-key",
+        TARGET_USERNAMES: "thsottiaux",
+      });
+
+      expect(tweets).toHaveLength(1);
+      expect(tweets[0]?.id).toBe("2091688655828246890");
+    } finally {
+      rettiwtMockState.authenticatedSearchSucceeds = false;
+      vi.unstubAllGlobals();
+    }
   });
 });
