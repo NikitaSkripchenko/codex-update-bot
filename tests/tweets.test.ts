@@ -1,4 +1,11 @@
-import { compareTweetIds, fetchRecentTweets, getUnseenTweets, normalizeTweets, parseNitterRssTweets } from "../src/tweets";
+import {
+  compareTweetIds,
+  fetchRecentTweets,
+  getUnseenTweets,
+  normalizeTweets,
+  parseJinaProfileTweets,
+  parseNitterRssTweets,
+} from "../src/tweets";
 
 const rettiwtMockState = vi.hoisted(() => ({ authenticatedSearchSucceeds: false }));
 
@@ -135,6 +142,67 @@ describe("tweets", () => {
     );
 
     expect(tweets).toEqual([]);
+  });
+
+  it("parses authored profile posts and stable timestamps from Jina Reader markdown", () => {
+    const tweets = parseJinaProfileTweets(
+      `Title: Tibo (@thsottiaux) on X
+
+Markdown Content:
+* [![Image: @thsottiaux](https://pbs.twimg.com/profile.jpg)](https://x.com/thsottiaux) [Tibo](https://x.com/thsottiaux) [@thsottiaux](https://x.com/thsottiaux) [3h](https://x.com/thsottiaux/status/2093914342551101782) Team is cooking like never before 559 88 4.2K 191K
+* [![Image: @thsottiaux](https://pbs.twimg.com/profile.jpg)](https://x.com/thsottiaux) [Tibo](https://x.com/thsottiaux) [@thsottiaux](https://x.com/thsottiaux) [11h](https://x.com/thsottiaux/status/2093801758665715784) We are reseting usage for all paid users of Codex and ChatGPT Work. Show more 1.3K 885 17K 1.5M
+
+Links/Buttons:
+- [3h](https://x.com/thsottiaux/status/2093914342551101782)
+- [11h](https://x.com/thsottiaux/status/2093801758665715784)
+- [quoted](https://x.com/other/status/2093532254006063557)`,
+      "thsottiaux",
+    );
+
+    expect(tweets.map((tweet) => tweet.id)).toEqual(["2093914342551101782", "2093801758665715784"]);
+    expect(tweets[0]).toMatchObject({
+      authorUsername: "thsottiaux",
+      createdAt: "2026-08-30T04:10:56.968Z",
+      fullText: "Team is cooking like never before",
+    });
+    expect(tweets[1]?.fullText).toContain("reseting usage for all paid users");
+    expect(tweets[1]?.fullText).not.toContain("Show more");
+  });
+
+  it("uses Jina Reader when every Nitter instance is unavailable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.startsWith("https://r.jina.ai/https://x.com/")) {
+        const username = url.endsWith("/sama") ? "sama" : "thsottiaux";
+        const id = username === "sama" ? "2093060670472241368" : "2093914342551101782";
+        return new Response(
+          `Markdown Content:\n* [![Image: @${username}](https://pbs.twimg.com/profile.jpg)](https://x.com/${username}) current post from ${username}\n\nLinks/Buttons:\n- [now](https://x.com/${username}/status/${id})`,
+          { status: 200, headers: { "content-type": "text/plain" } },
+        );
+      }
+
+      return new Response("unavailable", { status: 404 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const tweets = await fetchRecentTweets({
+        MONITOR_STATE: {} as KVNamespace,
+        TARGET_USERNAMES: "thsottiaux,sama",
+      });
+
+      expect(tweets.map((tweet) => tweet.authorUsername).sort()).toEqual(["sama", "thsottiaux"]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://r.jina.ai/https://x.com/thsottiaux",
+        expect.objectContaining({
+          headers: expect.objectContaining({ "x-with-links-summary": "all" }),
+          signal: expect.any(AbortSignal),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("retries a preferred Nitter host after a transient response", async () => {

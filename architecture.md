@@ -65,7 +65,7 @@ The scheduled path should run every hour by default. That is frequent enough for
 
 The tweet provider fetches recent posts from configured accounts and normalizes them into the app's internal tweet shape.
 
-The reference project uses `rettiwt-api` and combines search plus timeline/replies fallback. This project keeps the same idea behind a `TweetProvider` module so the source can be swapped if X/Twitter access changes. The implementation uses this source order: custom `TWEET_PROVIDER_URL`, Nitter RSS, then `rettiwt-api` guest/user fallback with Cloudflare `nodejs_compat`.
+The reference project uses `rettiwt-api` and combines search plus timeline/replies fallback. This project keeps the same idea behind a `TweetProvider` module so the source can be swapped if X/Twitter access changes. The implementation uses this source order: custom `TWEET_PROVIDER_URL`, Jina Reader for public X profiles, Nitter RSS, then `rettiwt-api` guest/user fallback with Cloudflare `nodejs_compat`.
 
 Internal tweet shape:
 
@@ -349,6 +349,7 @@ Non-secret config:
 - `TARGET_USERNAMES`: optional comma-separated monitored accounts. Production defaults to `thsottiaux,sama`.
 - `TARGET_USER_IDS`: optional comma-separated Rettiwt user IDs aligned with `TARGET_USERNAMES`.
 - `NITTER_BASE_URL`: optional comma-separated preferred Nitter hosts; defaults to `https://nitter.net` with built-in public-instance fallbacks.
+- `JINA_READER_BASE_URL`: optional Jina Reader prefix for public X profiles; defaults to `https://r.jina.ai/https://x.com`.
 - `TWEET_PROVIDER_URL`: optional HTTP tweet-provider endpoint; preferred for Worker-native deployments.
 - `POLL_LOOKBACK_HOURS`: defaults to `24`.
 - `RECENT_DECISION_LIMIT`: defaults to `50`.

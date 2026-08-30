@@ -9,6 +9,7 @@ TELEGRAM_WEBHOOK_SECRET=
 RETTIWT_API_KEY=
 NITTER_BASE_URL=https://nitter.net
 TWEET_PROVIDER_URL=
+JINA_READER_BASE_URL=https://r.jina.ai/https://x.com
 CRON_SECRET=
 TARGET_USERNAME=thsottiaux
 TARGET_USERNAMES=thsottiaux,sama

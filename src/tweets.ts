@@ -4,6 +4,9 @@ import type { Env, Tweet } from "./types";
 const DEFAULT_SEARCH_BATCH_SIZE = 20;
 const DEFAULT_LOOKBACK_HOURS = 24;
 const DEFAULT_NITTER_BASE_URL = "https://nitter.net";
+const DEFAULT_JINA_READER_BASE_URL = "https://r.jina.ai/https://x.com";
+const JINA_REQUEST_TIMEOUT_MS = 20_000;
+const TWITTER_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657n;
 const NITTER_REQUEST_TIMEOUT_MS = 5_000;
 const NITTER_RETRY_DELAY_MS = 500;
 const MAX_NITTER_RETRY_AFTER_MS = 5_000;
@@ -182,6 +185,101 @@ export const parseNitterRssTweets = (rss: string, targetUsername: string): Tweet
     .filter((tweet): tweet is Tweet => tweet !== null);
 };
 
+const getTweetCreatedAtFromId = (id: string): string => {
+  try {
+    const timestamp = Number((BigInt(id) >> 22n) + TWITTER_SNOWFLAKE_EPOCH_MS);
+    return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : "";
+  } catch (_error) {
+    return "";
+  }
+};
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const cleanJinaPostText = (value: string): string => {
+  const withoutMedia = value
+    .replace(/\[!\[[^\]]*\]\([^)]+\)\]\([^)]+\)/g, " ")
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, " ")
+    .replace(/\[([^\]]*)\]\([^)]+\)/g, "$1")
+    .replace(/\bShow more\b/gi, " ")
+    .replace(/(?:\s+\d+(?:[.,]\d+)?[KMB]?){2,}\s*$/i, " ");
+
+  return normalizeWhitespace(withoutMedia);
+};
+
+export const parseJinaProfileTweets = (markdown: string, targetUsername: string): Tweet[] => {
+  const target = normalizeUsername(targetUsername);
+  const escapedTarget = escapeRegExp(target);
+  const statusPattern = new RegExp(`https?://(?:x|twitter)\\.com/${escapedTarget}/status/(\\d+)`, "gi");
+  const tweetIds = Array.from(markdown.matchAll(statusPattern), (match) => match[1]).filter(
+    (id, index, ids): id is string => Boolean(id) && ids.indexOf(id) === index,
+  );
+  const body = (markdown.split(/\nLinks\/Buttons:/i)[0] || markdown).split(/\n## Log in or sign up/i)[0] || markdown;
+  const bullets = Array.from(body.matchAll(/(?:^|\n)\*\s+([\s\S]*?)(?=\n\*\s+|$)/g), (match) => match[1] || "")
+    .filter((entry) => new RegExp(`https?://(?:x|twitter)\\.com/${escapedTarget}(?:[)/])`, "i").test(entry));
+  const assignedIds = new Set<string>();
+
+  return bullets.map((bullet) => {
+    const inlineId = new RegExp(
+      `https?://(?:x|twitter)\\.com/${escapedTarget}/status/(\\d+)`,
+      "i",
+    ).exec(bullet)?.[1];
+    const id = inlineId || tweetIds.find((candidate) => !assignedIds.has(candidate)) || "";
+    assignedIds.add(id);
+    const inlineStatus = new RegExp(
+      `\\[[^\\]]*\\]\\(https?://(?:x|twitter)\\.com/${escapedTarget}/status/${id}[^)]*\\)\\s*([\\s\\S]*)`,
+      "i",
+    ).exec(bullet);
+    const fullText = cleanJinaPostText(inlineStatus?.[1] || bullet);
+
+    return {
+      id,
+      url: `https://x.com/${target}/status/${id}`,
+      createdAt: getTweetCreatedAtFromId(id),
+      fullText,
+      authorUsername: target,
+      isRetweet: false,
+      isReply: false,
+      quotedText: null,
+      quotedUrl: null,
+      quotedCreatedAt: null,
+    };
+  }).filter((tweet) => Boolean(tweet.id && tweet.createdAt && tweet.fullText));
+};
+
+const fetchJinaProfileForUsername = async (env: Env, targetUsername: string): Promise<Tweet[]> => {
+  const baseUrl = normalizeBaseUrl(getEnvString(env.JINA_READER_BASE_URL, DEFAULT_JINA_READER_BASE_URL));
+  const response = await fetch(`${baseUrl}/${encodeURIComponent(targetUsername)}`, {
+    signal: AbortSignal.timeout(JINA_REQUEST_TIMEOUT_MS),
+    headers: {
+      accept: "text/plain; charset=utf-8",
+      "x-cache-tolerance": "300",
+      "x-timeout": "15",
+      "x-with-links-summary": "all",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Jina Reader returned ${response.status} for @${targetUsername}`);
+  }
+
+  const tweets = parseJinaProfileTweets(await response.text(), targetUsername);
+
+  if (tweets.length === 0) {
+    throw new Error(`Jina Reader returned no parseable posts for @${targetUsername}`);
+  }
+
+  return tweets;
+};
+
+const fetchFromJinaProfiles = async (env: Env): Promise<Tweet[]> => {
+  const tweets = await Promise.all(
+    getTargetUsernames(env).map((targetUsername) => fetchJinaProfileForUsername(env, targetUsername)),
+  );
+
+  return dedupeTweetsById(tweets.flat());
+};
+
 const getNitterRetryDelayMs = (response: Response): number => {
   const retryAfterHeader = response.headers.get("retry-after");
   const retryAfter = retryAfterHeader === null ? Number.NaN : Number(retryAfterHeader);
@@ -232,6 +330,27 @@ export const getTweetSourceDiagnostics = async (env: Env): Promise<Record<string
   const baseUrls = getNitterBaseUrls(env);
   const configuredBaseUrls = new Set(splitCsv(env.NITTER_BASE_URL).map(normalizeBaseUrl));
   const attempts: Record<string, unknown>[] = [];
+  const jina: Record<string, unknown>[] = [];
+
+  for (const targetUsername of targetUsernames) {
+    try {
+      const tweets = await fetchJinaProfileForUsername(env, targetUsername);
+      jina.push({
+        username: targetUsername,
+        ok: true,
+        parsedCount: tweets.length,
+        firstParsedTweet: tweets[0]
+          ? { id: tweets[0].id, createdAt: tweets[0].createdAt, url: tweets[0].url, text: tweets[0].fullText.slice(0, 160) }
+          : null,
+      });
+    } catch (error) {
+      jina.push({
+        username: targetUsername,
+        ok: false,
+        error: getErrorMessage(error),
+      });
+    }
+  }
 
   for (const targetUsername of targetUsernames) {
     for (const baseUrl of baseUrls) {
@@ -276,6 +395,7 @@ export const getTweetSourceDiagnostics = async (env: Env): Promise<Record<string
     targetUsernames,
     startDate: startDate.toISOString(),
     providerUrlConfigured: Boolean(getEnvString(env.TWEET_PROVIDER_URL)),
+    jina,
     nitter: attempts,
   };
 };
@@ -612,6 +732,17 @@ const fetchTweetsSince = async (env: Env, startDate: Date): Promise<Tweet[]> => 
 
   if (providerTweets.length > 0) {
     return providerTweets;
+  }
+
+  try {
+    const jinaTweets = await fetchFromJinaProfiles(env);
+
+    if (jinaTweets.length > 0) {
+      console.log(JSON.stringify({ event: "tweet_source_selected", source: "jina", tweetCount: jinaTweets.length }));
+      return jinaTweets;
+    }
+  } catch (error) {
+    console.warn(JSON.stringify({ event: "tweet_source_failed", source: "jina", error: getErrorMessage(error) }));
   }
 
   const nitterTweets = await fetchFromNitterRss(env, startDate);

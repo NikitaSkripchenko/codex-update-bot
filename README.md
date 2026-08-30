@@ -61,7 +61,7 @@ For a group chat, add the bot to the group, send a message in the group, then ru
 
 ### Tweet Provider
 
-By default the app uses Nitter RSS first, then falls back to `rettiwt-api` guest authentication. No Twitter/X key is required for private v1.
+By default the app uses Jina Reader against the public X profiles, then falls back to Nitter RSS and `rettiwt-api` guest authentication. No Twitter/X key is required for private v1. The scheduled monitor makes one Jina request per configured account per hour; Jina's public unauthenticated Reader limit is currently sufficient for this workload.
 
 Optional Rettiwt user auth:
 
@@ -105,6 +105,7 @@ Optional:
 - `TARGET_USERNAMES`, optional comma-separated monitored accounts. Production defaults to `thsottiaux,sama`.
 - `TARGET_USER_IDS`, optional comma-separated Rettiwt user IDs aligned with `TARGET_USERNAMES`
 - `NITTER_BASE_URL`, optional comma-separated preferred Nitter hosts; defaults to `https://nitter.net` with built-in public-instance fallbacks
+- `JINA_READER_BASE_URL`, optional Jina Reader prefix; defaults to `https://r.jina.ai/https://x.com`
 - `POLL_LOOKBACK_HOURS`, defaults to `24`
 - `RECENT_DECISION_LIMIT`, defaults to `50`
 

@@ -74,6 +74,7 @@ export type Env = {
   TELEGRAM_WEBHOOK_SECRET?: string;
   RETTIWT_API_KEY?: string;
   NITTER_BASE_URL?: string;
+  JINA_READER_BASE_URL?: string;
   TWEET_PROVIDER_URL?: string;
   CRON_SECRET?: string;
   TARGET_USERNAME?: string;

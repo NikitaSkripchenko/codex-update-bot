@@ -20,7 +20,7 @@ Approved and completed on August 30, 2026:
 - Replayed `2093801758665715784:reset_confirmed` to four active subscribers. D1 records four `delivered` rows, all on attempt 1; KV records `deliveryMode: direct` and `deliveredCount: 4`.
 - Added structured delivery logs and enabled Worker observability.
 - Verification passed: TypeScript, 9 test files / 67 tests, bundle dry run, production deployment metadata, KV state, and D1 delivery rows.
-- Remaining concern: a post-deployment manual monitor run still failed because every configured tweet source ultimately fell through to Rettiwt, which failed for both monitored accounts. This was not the cause of the already-classified incident and remains separate follow-up work.
+- The subsequent source-availability follow-up added Jina Reader as the primary public-profile source after diagnostics showed every Nitter instance unavailable and Rettiwt guest access failing. Production verification is recorded in the follow-up commit and deployment.
 
 ## Constraints
 
