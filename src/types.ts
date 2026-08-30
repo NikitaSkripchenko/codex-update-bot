@@ -1,4 +1,5 @@
 export type ClassificationVerdict = "reset_confirmed" | "not_reset" | "uncertain";
+export type AlertEligibility = "eligible" | "initial_seed" | "historical";
 
 export type Tweet = {
   id: string;
@@ -38,6 +39,7 @@ export type MonitorDecision = {
   usage?: Classification["usage"];
   alertedAt: string;
   deliveryMode: "cached" | "direct" | "queued";
+  alertEligibility?: AlertEligibility;
   deliveredCount?: number;
   queuedCount?: number;
 };

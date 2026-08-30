@@ -10,11 +10,10 @@ import {
   releaseMonitorLock,
   writeMonitorState,
 } from "./state";
-import { fetchRecentTweets, getNewestTweet, getUnseenTweets, isAuthoredByTargetUsername, sortTweetsAscending } from "./tweets";
-import type { Classification, DispatchResult, Env, MonitorOutcome, MonitorState, Tweet } from "./types";
+import { compareTweetIds, fetchRecentTweets, getNewestTweet, isAuthoredByTargetUsername, sortTweetsAscending } from "./tweets";
+import type { AlertEligibility, Classification, DispatchResult, Env, MonitorDecision, MonitorOutcome, MonitorState, Tweet } from "./types";
 
-const TWITTER_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657;
-const DEFAULT_HISTORICAL_BACKFILL_MIN_HOURS = 24;
+const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type MonitorDeps = {
   fetchTweets?: (env: Env) => Promise<Tweet[]>;
@@ -56,6 +55,7 @@ const createDecision = (
   tweet: Tweet,
   classification: Classification,
   dispatchResult: DispatchResult,
+  alertEligibility: AlertEligibility,
 ): MonitorState["recentDecisions"][number] => ({
   tweetId: tweet.id,
   tweetUrl: tweet.url,
@@ -68,6 +68,7 @@ const createDecision = (
   usage: classification.usage,
   alertedAt: new Date().toISOString(),
   deliveryMode: dispatchResult.mode,
+  alertEligibility,
   deliveredCount: dispatchResult.mode === "direct" ? dispatchResult.deliveredCount : undefined,
   queuedCount: dispatchResult.mode === "queued" ? dispatchResult.queuedCount : undefined,
 });
@@ -75,6 +76,7 @@ const createDecision = (
 const createCachedDecision = (
   tweet: Tweet,
   classification: Classification,
+  alertEligibility: AlertEligibility,
 ): MonitorState["recentDecisions"][number] => ({
   tweetId: tweet.id,
   tweetUrl: tweet.url,
@@ -87,6 +89,7 @@ const createCachedDecision = (
   usage: classification.usage,
   alertedAt: new Date().toISOString(),
   deliveryMode: "cached",
+  alertEligibility,
 });
 
 const shouldRefreshCachedDecision = (decision: MonitorState["recentDecisions"][number] | undefined): boolean => {
@@ -99,7 +102,7 @@ const shouldRefreshCachedDecision = (decision: MonitorState["recentDecisions"][n
 
 const shouldDispatchAlert = (classification: Classification): boolean => classification.verdict === "reset_confirmed";
 
-const appendMissingCachedDecisions = async (
+const appendSeedDecisions = async (
   env: Env,
   state: MonitorState,
   tweets: Tweet[],
@@ -115,7 +118,7 @@ const appendMissingCachedDecisions = async (
     }
 
     const classification = await classify(env, tweet);
-    nextState = appendRecentDecision(nextState, createCachedDecision(tweet, classification), limit);
+    nextState = appendRecentDecision(nextState, createCachedDecision(tweet, classification, "initial_seed"), limit);
     cachedTweetIds.add(tweet.id);
   }
 
@@ -124,63 +127,113 @@ const appendMissingCachedDecisions = async (
 
 const isValidTweetId = (value: string | null): boolean => typeof value === "string" && /^\d+$/.test(value);
 
-const isAfterLastCheck = (tweet: Tweet, lastCheckAt: string | null): boolean => {
-  if (!lastCheckAt) {
-    return true;
+const getAlertEligibility = (tweet: Tweet, existing?: MonitorDecision): AlertEligibility => {
+  if (existing?.alertEligibility === "initial_seed" || existing?.alertEligibility === "historical") {
+    return existing.alertEligibility;
   }
 
-  const tweetTimestamp = new Date(tweet.createdAt).valueOf();
-  const lastCheckTimestamp = new Date(lastCheckAt).valueOf();
-
-  return Number.isFinite(tweetTimestamp) && Number.isFinite(lastCheckTimestamp) && tweetTimestamp > lastCheckTimestamp;
+  const publishedAt = new Date(tweet.createdAt).valueOf();
+  const ageMs = Date.now() - publishedAt;
+  return Number.isFinite(publishedAt) && ageMs >= 0 && ageMs < ALERT_WINDOW_MS ? "eligible" : "historical";
 };
 
-const parseTimestamp = (value: string | null | undefined): number | null => {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = new Date(value).valueOf();
-  return Number.isFinite(timestamp) ? timestamp : null;
-};
-
-const parseTweetIdTimestamp = (id: string | null | undefined): number | null => {
-  if (!id || !/^\d+$/.test(id)) {
-    return null;
-  }
+const decisionToTweet = (decision: MonitorDecision): Tweet => {
+  let authorUsername = "unknown";
 
   try {
-    return Number((BigInt(id) >> 22n) + BigInt(TWITTER_SNOWFLAKE_EPOCH_MS));
-  } catch {
-    return null;
+    authorUsername = new URL(decision.tweetUrl).pathname.split("/").filter(Boolean)[0] || "unknown";
+  } catch (_error) {
+    // Keep the fallback username; the alert still links to the saved URL.
   }
+
+  return {
+    id: decision.tweetId,
+    url: decision.tweetUrl,
+    createdAt: decision.tweetCreatedAt,
+    fullText: decision.tweetText || "",
+    authorUsername,
+    isReply: false,
+    isRetweet: false,
+  };
 };
 
-const getTweetTimestamp = (tweet: Tweet): number | null =>
-  parseTimestamp(tweet.createdAt) ?? parseTweetIdTimestamp(tweet.id);
+const withMonotonicWatermark = (state: MonitorState, tweet: Tweet): MonitorState => {
+  if (state.lastSeenTweetId && compareTweetIds(tweet.id, state.lastSeenTweetId) <= 0) {
+    return state;
+  }
 
-const getLastSeenTimestamp = (state: MonitorState): number | null => {
-  const decision = state.recentDecisions.find((entry) => entry.tweetId === state.lastSeenTweetId);
-  return parseTimestamp(decision?.tweetCreatedAt) ?? parseTweetIdTimestamp(state.lastSeenTweetId);
+  return {
+    ...state,
+    lastSeenTweetId: tweet.id,
+    lastSeenTweetUrl: tweet.url,
+  };
 };
 
-const isHistoricalSourceJump = (env: Env, state: MonitorState, unseenTweets: Tweet[]): boolean => {
-  const latestUnseenTweet = unseenTweets[unseenTweets.length - 1];
+const persistDecision = async (
+  env: Env,
+  state: MonitorState,
+  decision: MonitorDecision,
+  limit: number,
+): Promise<MonitorState> => {
+  const nextState = appendRecentDecision(
+    {
+      ...state,
+      lastCheckAt: new Date().toISOString(),
+      lastError: null,
+    },
+    decision,
+    limit,
+  );
+  await writeMonitorState(env.MONITOR_STATE, nextState);
+  return nextState;
+};
 
-  if (!latestUnseenTweet) {
-    return false;
+const reconcilePendingAlerts = async (
+  env: Env,
+  state: MonitorState,
+  dispatch: (env: Env, tweet: Tweet, classification: Classification) => Promise<DispatchResult>,
+  limit: number,
+): Promise<MonitorState> => {
+  let nextState = state;
+  const pending = state.recentDecisions.filter(
+    (decision) =>
+      decision.verdict === "reset_confirmed" &&
+      decision.deliveryMode === "cached" &&
+      decision.alertEligibility === "eligible",
+  );
+
+  for (const decision of pending) {
+    const tweet = decisionToTweet(decision);
+    const eligibility = getAlertEligibility(tweet, decision);
+
+    if (eligibility !== "eligible") {
+      nextState = await persistDecision(env, nextState, { ...decision, alertEligibility: eligibility }, limit);
+      continue;
+    }
+
+    const classification: Classification = {
+      verdict: decision.verdict,
+      confidence: decision.confidence,
+      rationale: decision.rationale,
+      model: decision.model,
+      usage: decision.usage,
+    };
+    const dispatchResult = await dispatch(env, tweet, classification);
+    console.log(JSON.stringify({
+      event: "monitor_pending_alert_dispatched",
+      tweetId: tweet.id,
+      mode: dispatchResult.mode,
+      recipientCount: dispatchResult.mode === "queued" ? dispatchResult.queuedCount : dispatchResult.deliveredCount,
+    }));
+    nextState = await persistDecision(
+      env,
+      nextState,
+      createDecision(tweet, classification, dispatchResult, eligibility),
+      limit,
+    );
   }
 
-  const latestUnseenTimestamp = getTweetTimestamp(latestUnseenTweet);
-  const lastCheckTimestamp = parseTimestamp(state.lastCheckAt);
-  const lastSeenTimestamp = getLastSeenTimestamp(state);
-
-  if (!latestUnseenTimestamp || !lastCheckTimestamp || !lastSeenTimestamp || latestUnseenTimestamp > lastCheckTimestamp) {
-    return false;
-  }
-
-  const minimumGapMs = getNumberEnv(env.POLL_LOOKBACK_HOURS, DEFAULT_HISTORICAL_BACKFILL_MIN_HOURS) * 60 * 60 * 1000;
-  return latestUnseenTimestamp - lastSeenTimestamp > minimumGapMs;
+  return nextState;
 };
 
 const markChecked = async (env: Env): Promise<void> => {
@@ -205,6 +258,8 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
     const fetchTweets = deps.fetchTweets || fetchRecentTweets;
     const classify = deps.classify || classifyTweet;
     const dispatch = deps.dispatch || dispatchAlert;
+    const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
+    state = await reconcilePendingAlerts(env, state, dispatch, recentDecisionLimit);
     const timelineTweets = await fetchTweets(env);
     const authoredTweets = sortTweetsAscending(
       timelineTweets.filter((tweet) => isAuthoredByTargetUsername(tweet, targetUsernames)),
@@ -228,8 +283,6 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
     }
 
     if (!state.lastSeenTweetId) {
-      const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
-
       state = {
         ...state,
         lastSeenTweetId: newestTweet.id,
@@ -238,7 +291,7 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
         lastError: null,
       };
 
-      state = await appendMissingCachedDecisions(env, state, authoredTweets, classify, recentDecisionLimit);
+      state = await appendSeedDecisions(env, state, authoredTweets, classify, recentDecisionLimit);
 
       await writeMonitorState(env.MONITOR_STATE, state);
 
@@ -249,95 +302,65 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
       };
     }
 
-    const unseenTweets = getUnseenTweets(authoredTweets, state.lastSeenTweetId);
-
-    if (unseenTweets.length === 0) {
-      const latestDecision = state.recentDecisions.find((decision) => decision.tweetId === newestTweet.id);
-      const missingCachedDecision = authoredTweets.some(
-        (tweet) => !state.recentDecisions.some((decision) => decision.tweetId === tweet.id),
-      );
-
-      if (shouldRefreshCachedDecision(latestDecision) || missingCachedDecision) {
-        const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
-
-        state = await appendMissingCachedDecisions(
-          env,
-          {
-            ...state,
-            lastSeenTweetId: newestTweet.id,
-            lastSeenTweetUrl: newestTweet.url,
-            lastCheckAt: new Date().toISOString(),
-            lastError: null,
-          },
-          authoredTweets,
-          classify,
-          recentDecisionLimit,
-        );
-        await writeMonitorState(env.MONITOR_STATE, state);
-      } else {
-        await markChecked(env);
-      }
-
-      return {
-        outcome: "no_new_tweets",
-        processedCount: 0,
-        lastSeenTweetId: state.lastSeenTweetId || undefined,
-      };
-    }
-
-    const alertableTweets = unseenTweets.filter((tweet) => isAfterLastCheck(tweet, state.lastCheckAt));
-
-    if (alertableTweets.length === 0 && isHistoricalSourceJump(env, state, unseenTweets)) {
-      const latestBackfilledTweet = unseenTweets[unseenTweets.length - 1];
-      const classification = await classify(env, latestBackfilledTweet);
-      state = appendRecentDecision(
-        {
-          ...state,
-          lastSeenTweetId: latestBackfilledTweet.id,
-          lastSeenTweetUrl: latestBackfilledTweet.url,
-          lastCheckAt: new Date().toISOString(),
-          lastError: null,
-        },
-        createCachedDecision(latestBackfilledTweet, classification),
-        getNumberEnv(env.RECENT_DECISION_LIMIT, 50),
-      );
-      await writeMonitorState(env.MONITOR_STATE, state);
-
-      return {
-        outcome: "no_new_tweets",
-        processedCount: 0,
-        lastSeenTweetId: state.lastSeenTweetId || undefined,
-      };
-    }
-
     let processedCount = 0;
-    const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
-    const tweetsToProcess = alertableTweets.length > 0 ? alertableTweets : unseenTweets;
+    const startingWatermark = state.lastSeenTweetId;
+    const tweetsToProcess = authoredTweets.filter((tweet) => {
+      const existing = state.recentDecisions.find((decision) => decision.tweetId === tweet.id);
+      return !existing || shouldRefreshCachedDecision(existing);
+    }).slice(-recentDecisionLimit);
 
     for (const tweet of tweetsToProcess) {
+      const existing = state.recentDecisions.find((decision) => decision.tweetId === tweet.id);
       const classification = await classify(env, tweet);
-      const dispatchResult = shouldDispatchAlert(classification) ? await dispatch(env, tweet, classification) : null;
-      const decision = dispatchResult
-        ? createDecision(tweet, classification, dispatchResult)
-        : createCachedDecision(tweet, classification);
-
-      state = appendRecentDecision(
-        {
-          ...state,
-          lastSeenTweetId: tweet.id,
-          lastSeenTweetUrl: tweet.url,
-          lastCheckAt: new Date().toISOString(),
-          lastError: null,
-        },
-        decision,
+      const alertEligibility = getAlertEligibility(tweet, existing);
+      state = withMonotonicWatermark(state, tweet);
+      state = await persistDecision(
+        env,
+        state,
+        createCachedDecision(tweet, classification, alertEligibility),
         recentDecisionLimit,
       );
-      await writeMonitorState(env.MONITOR_STATE, state);
-      processedCount += 1;
+
+      const shouldDispatch = shouldDispatchAlert(classification) && alertEligibility === "eligible";
+
+      if (shouldDispatch) {
+        const dispatchResult = await dispatch(env, tweet, classification);
+        console.log(JSON.stringify({
+          event: "monitor_alert_dispatched",
+          tweetId: tweet.id,
+          mode: dispatchResult.mode,
+          recipientCount: dispatchResult.mode === "queued" ? dispatchResult.queuedCount : dispatchResult.deliveredCount,
+        }));
+        state = await persistDecision(
+          env,
+          state,
+          createDecision(tweet, classification, dispatchResult, alertEligibility),
+          recentDecisionLimit,
+        );
+      }
+
+      if (classification.verdict === "reset_confirmed" && alertEligibility !== "eligible") {
+        console.log(JSON.stringify({
+          event: "monitor_alert_suppressed",
+          tweetId: tweet.id,
+          reason: alertEligibility,
+        }));
+      }
+
+      const advancedFromStartingWatermark =
+        !startingWatermark || compareTweetIds(tweet.id, startingWatermark) > 0;
+
+      if (alertEligibility === "eligible" && (advancedFromStartingWatermark || shouldDispatch)) {
+        processedCount += 1;
+      }
+    }
+
+    if (processedCount === 0) {
+      await markChecked(env);
     }
 
     return {
-      outcome: "processed",
+      outcome: processedCount > 0 ? "processed" : "no_new_tweets",
       processedCount,
       lastSeenTweetId: state.lastSeenTweetId || undefined,
     };

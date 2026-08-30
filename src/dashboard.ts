@@ -72,13 +72,20 @@ const createReevaluatedDecision = (
   model: classification.model,
   usage: classification.usage,
   alertedAt: new Date().toISOString(),
-  deliveryMode: dispatchResult?.mode || "cached",
-  deliveredCount: dispatchResult?.mode === "direct" ? dispatchResult.deliveredCount : undefined,
-  queuedCount: dispatchResult?.mode === "queued" ? dispatchResult.queuedCount : undefined,
+  deliveryMode: dispatchResult?.mode || decision.deliveryMode,
+  deliveredCount: dispatchResult?.mode === "direct" ? dispatchResult.deliveredCount : decision.deliveredCount,
+  queuedCount: dispatchResult?.mode === "queued" ? dispatchResult.queuedCount : decision.queuedCount,
+  alertEligibility: dispatchResult ? "eligible" : decision.alertEligibility,
 });
 
 const isResetTransition = (previous: MonitorDecision, next: Classification): boolean =>
   previous.verdict !== "reset_confirmed" && next.verdict === "reset_confirmed";
+
+const isFreshDecision = (decision: MonitorDecision): boolean => {
+  const publishedAt = new Date(decision.tweetCreatedAt).valueOf();
+  const ageMs = Date.now() - publishedAt;
+  return Number.isFinite(publishedAt) && ageMs >= 0 && ageMs < 24 * 60 * 60 * 1000;
+};
 
 export type DashboardDeps = {
   classify?: (env: Env, tweet: Tweet) => Promise<Classification>;
@@ -109,8 +116,13 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
   }
 
   const state = await readMonitorState(env.MONITOR_STATE);
-  const body = await request.json().catch(() => null) as { tweetId?: unknown } | null;
+  const body = await request.json().catch(() => null) as { tweetId?: unknown; replayConfirmed?: unknown } | null;
   const tweetId = typeof body?.tweetId === "string" ? body.tweetId : "";
+  const replayConfirmed = body?.replayConfirmed === true;
+
+  if (body?.replayConfirmed !== undefined && typeof body.replayConfirmed !== "boolean") {
+    return jsonResponse({ ok: false, error: "replayConfirmed must be a boolean." }, { status: 400 });
+  }
 
   if (!tweetId) {
     return jsonResponse({ ok: false, error: "Select a cached tweet to re-evaluate." }, { status: 400 });
@@ -142,8 +154,22 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
     );
   }
 
+  if (replayConfirmed) {
+    if (latestDecision.verdict !== "reset_confirmed" || classification.verdict !== "reset_confirmed") {
+      return jsonResponse({ ok: false, error: "Only a confirmed reset decision can be replayed." }, { status: 409 });
+    }
+
+    if (latestDecision.alertEligibility === "initial_seed" || latestDecision.alertEligibility === "historical" || !isFreshDecision(latestDecision)) {
+      return jsonResponse({ ok: false, error: "This reset is no longer eligible for a subscriber alert." }, { status: 409 });
+    }
+  }
+
   const dispatch = deps.dispatch || (isPublicSubscriptionsEnabled(env) ? dispatchSubscriberAlertNow : dispatchAlert);
-  const dispatchResult = isResetTransition(latestDecision, classification)
+  const shouldDispatch =
+    isFreshDecision(latestDecision) &&
+    (isResetTransition(latestDecision, classification) ||
+      (replayConfirmed && latestDecision.deliveryMode === "cached"));
+  const dispatchResult = shouldDispatch
     ? await dispatch(env, tweet, classification)
     : null;
   const updatedDecision = createReevaluatedDecision(latestDecision, classification, dispatchResult);
@@ -152,7 +178,7 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
     recentDecisions: appendRecentDecision(current, updatedDecision, Math.max(current.recentDecisions.length, 1)).recentDecisions,
   }));
 
-  return jsonResponse({ ok: true, decision: updatedState.recentDecisions[0] });
+  return jsonResponse({ ok: true, replayed: Boolean(replayConfirmed && dispatchResult), decision: updatedState.recentDecisions[0] });
 };
 
 const renderLatestDecision = (decision: MonitorDecision | undefined): string => {

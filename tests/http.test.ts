@@ -26,7 +26,7 @@ describe("http dashboard", () => {
         {
           tweetId: "1",
           tweetUrl: "https://x.com/thsottiaux/status/1",
-          tweetCreatedAt: "2026-07-10T11:58:00.000Z",
+          tweetCreatedAt: new Date().toISOString(),
           tweetText: "Limits reset <script>alert(1)</script>",
           verdict: "reset_confirmed",
           confidence: 0.94,
@@ -323,7 +323,7 @@ describe("http dashboard", () => {
         {
           tweetId: "1",
           tweetUrl: "https://x.com/thsottiaux/status/1",
-          tweetCreatedAt: "2026-07-10T11:58:00.000Z",
+          tweetCreatedAt: new Date().toISOString(),
           tweetText: "Codex rate limits have reset now.",
           verdict: "not_reset",
           confidence: 0.2,
@@ -362,5 +362,92 @@ describe("http dashboard", () => {
     );
 
     expect(dispatch).toHaveBeenCalledTimes(1);
+    const repeatedState = await readMonitorState(env.MONITOR_STATE);
+    expect(repeatedState.recentDecisions[0]).toMatchObject({ deliveryMode: "queued", queuedCount: 2 });
+  });
+
+  it("explicitly replays a fresh confirmed cached decision and records delivery", async () => {
+    const env = {
+      ...createEnv(),
+      OPENROUTER_API_KEY: "openrouter-key",
+    };
+    await writeMonitorState(env.MONITOR_STATE, {
+      lastSeenTweetId: "2093801838504186008",
+      lastSeenTweetUrl: "https://x.com/thsottiaux/status/2093801838504186008",
+      lastCheckAt: new Date().toISOString(),
+      lastError: null,
+      recentDecisions: [
+        {
+          tweetId: "2093801758665715784",
+          tweetUrl: "https://x.com/thsottiaux/status/2093801758665715784",
+          tweetCreatedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+          tweetText: "We are reseting usage for all paid users of Codex and ChatGPT Work.",
+          verdict: "reset_confirmed",
+          confidence: 0.99,
+          rationale: "Usage resets announced.",
+          alertedAt: new Date().toISOString(),
+          deliveryMode: "cached",
+        },
+      ],
+    });
+    const classification = { verdict: "reset_confirmed" as const, confidence: 0.99, rationale: "Usage resets announced." };
+    const dispatch = vi.fn(async () => ({ mode: "direct" as const, deliveredCount: 4, permanentFailureCount: 0 }));
+
+    const response = await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        body: JSON.stringify({ tweetId: "2093801758665715784", replayConfirmed: true }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+      env,
+      { classify: async () => classification, dispatch },
+    );
+    const body = await response.json() as { replayed?: boolean };
+    const state = await readMonitorState(env.MONITOR_STATE);
+
+    expect(response.status).toBe(200);
+    expect(body.replayed).toBe(true);
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    expect(state.recentDecisions[0]).toMatchObject({ deliveryMode: "direct", deliveredCount: 4 });
+  });
+
+  it("rejects replaying an expired confirmed decision", async () => {
+    const env = { ...createEnv(), OPENROUTER_API_KEY: "openrouter-key" };
+    await writeMonitorState(env.MONITOR_STATE, {
+      lastSeenTweetId: "1",
+      lastSeenTweetUrl: "https://x.com/thsottiaux/status/1",
+      lastCheckAt: new Date().toISOString(),
+      lastError: null,
+      recentDecisions: [
+        {
+          tweetId: "1",
+          tweetUrl: "https://x.com/thsottiaux/status/1",
+          tweetCreatedAt: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString(),
+          tweetText: "Codex limits have reset.",
+          verdict: "reset_confirmed",
+          confidence: 0.99,
+          rationale: "Usage reset.",
+          alertedAt: new Date().toISOString(),
+          deliveryMode: "cached",
+        },
+      ],
+    });
+    const dispatch = vi.fn(async () => ({ mode: "direct" as const, deliveredCount: 4, permanentFailureCount: 0 }));
+
+    const response = await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        body: JSON.stringify({ tweetId: "1", replayConfirmed: true }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+      env,
+      {
+        classify: async () => ({ verdict: "reset_confirmed", confidence: 0.99, rationale: "Usage reset." }),
+        dispatch,
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(dispatch).not.toHaveBeenCalled();
   });
 });

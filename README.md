@@ -202,6 +202,8 @@ npm run db:migrate:local
 
 Re-evaluating a cached decision that changes from `not_reset` or `uncertain` to `reset_confirmed` sends a subscriber alert and saves its delivery status to production KV. Other re-evaluations update the cached decision only. If OpenRouter is rate limited, the dashboard reports the error and preserves the existing production decision.
 
+An operator can explicitly recover a fresh confirmed decision that was cached without delivery by posting `{"tweetId":"<id>","replayConfirmed":true}` to the local-only `/dashboard/re-evaluate` route. This operation reclassifies the saved post, rejects expired or seeded history, and uses the D1 delivery ledger to skip subscribers who already received the alert. Routine re-evaluation never replays an already-confirmed decision.
+
 Trigger a manual run:
 
 ```sh

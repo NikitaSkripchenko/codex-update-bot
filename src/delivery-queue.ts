@@ -1,4 +1,4 @@
-import { getNumberEnv, isPublicSubscriptionsEnabled } from "./env";
+import { getErrorMessage, getNumberEnv, isPublicSubscriptionsEnabled } from "./env";
 import {
   claimDelivery,
   listActiveChatIds,
@@ -59,6 +59,8 @@ const dispatchQueuedAlert = async (
 
     offset += chatIds.length;
   }
+
+  console.log(JSON.stringify({ event: "telegram_alert_queued", alertId, queuedCount }));
 
   return {
     mode: "queued",
@@ -205,6 +207,8 @@ export const dispatchSubscriberAlertNow = async (
     offset += chatIds.length;
   }
 
+  console.log(JSON.stringify({ event: "telegram_alert_delivered_now", alertId, deliveredCount, permanentFailureCount }));
+
   return { mode: "direct", deliveredCount, permanentFailureCount };
 };
 
@@ -216,7 +220,12 @@ export const processDeliveryBatch = async (
     try {
       await deliverQueueMessage(env, message.body);
       message.ack();
-    } catch (_error) {
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: "telegram_queue_delivery_retry",
+        alertId: message.body.alertId,
+        error: getErrorMessage(error),
+      }));
       message.retry();
     }
   }

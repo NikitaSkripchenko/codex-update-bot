@@ -48,6 +48,12 @@ const normalizeDecision = (value: unknown): MonitorDecision | null => {
       : undefined,
     alertedAt: typeof decision.alertedAt === "string" ? decision.alertedAt : "",
     deliveryMode: decision.deliveryMode === "cached" || decision.deliveryMode === "queued" ? decision.deliveryMode : "direct",
+    alertEligibility:
+      decision.alertEligibility === "eligible" ||
+      decision.alertEligibility === "initial_seed" ||
+      decision.alertEligibility === "historical"
+        ? decision.alertEligibility
+        : undefined,
     deliveredCount: typeof decision.deliveredCount === "number" ? decision.deliveredCount : undefined,
     queuedCount: typeof decision.queuedCount === "number" ? decision.queuedCount : undefined,
   };
