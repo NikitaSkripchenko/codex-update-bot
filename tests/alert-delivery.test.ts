@@ -30,6 +30,37 @@ describe("alert delivery", () => {
     expect(result.deliveredCount).toBe(1);
   });
 
+  it("forwards successful and failed outcomes to their hooks", async () => {
+    const successes: string[] = [];
+    const failures: Array<{ chatId: string; error: string; permanent: boolean; retryable: boolean }> = [];
+
+    await deliverToRecipients(
+      ["successful", "failed"],
+      (chatId): TelegramSendResult =>
+        chatId === "successful"
+          ? { ok: true, status: 200 }
+          : { ok: false, status: 403, error: "blocked", permanent: true, retryable: false },
+      {
+        onSuccess: (chatId) => {
+          successes.push(chatId);
+        },
+        onFailure: (chatId, result) => {
+          failures.push({
+            chatId,
+            error: result.error,
+            permanent: result.permanent,
+            retryable: result.retryable,
+          });
+        },
+      },
+    );
+
+    expect(successes).toEqual(["successful"]);
+    expect(failures).toEqual([
+      { chatId: "failed", error: "blocked", permanent: true, retryable: false },
+    ]);
+  });
+
   it("keeps retryable errors bare by default and can format them with chat IDs", async () => {
     const bare = await deliverToRecipients(["temporary"], async (): Promise<TelegramSendResult> => ({
       ok: false,
