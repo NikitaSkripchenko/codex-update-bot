@@ -4,9 +4,11 @@ import {
   formatStatusMessage,
   getTelegramCommandReplyMarkup,
   parseTelegramChatIds,
+  sendTelegramMessage,
   setTelegramCommands,
   truncateForTelegram,
 } from "../src/telegram";
+import { callTelegram } from "../src/telegram-transport";
 
 describe("telegram", () => {
   it("parses comma-separated chat IDs", () => {
@@ -188,5 +190,36 @@ describe("telegram", () => {
     expect(JSON.parse(String(calls[0]?.init?.body)).commands).toEqual(
       expect.arrayContaining([expect.objectContaining({ command: "status" })]),
     );
+  });
+
+  it("maps a Telegram HTTP error to a permanent transport failure", async () => {
+    const result = await callTelegram(
+      { TELEGRAM_BOT_TOKEN: "token" },
+      "sendMessage",
+      { chat_id: "123", text: "hello" },
+      (async () =>
+        new Response(JSON.stringify({ ok: false, description: "Forbidden: bot was blocked by the user" }), {
+          status: 403,
+        })) as typeof fetch,
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      error: "Forbidden: bot was blocked by the user",
+      permanent: true,
+      retryable: false,
+    });
+  });
+
+  it("keeps sendMessage result mapping on top of the shared transport", async () => {
+    const result = await sendTelegramMessage(
+      { TELEGRAM_BOT_TOKEN: "token" },
+      "123",
+      "hello",
+      (async () => new Response(JSON.stringify({ ok: true, result: { message_id: 42 } }), { status: 200 })) as typeof fetch,
+    );
+
+    expect(result).toEqual({ ok: true, status: 200, messageId: 42 });
   });
 });
