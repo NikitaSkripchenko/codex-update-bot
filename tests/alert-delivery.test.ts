@@ -96,6 +96,7 @@ describe("alert delivery", () => {
     ]);
 
     const env = {
+      MONITOR_STATE: {} as KVNamespace,
       SUBSCRIPTIONS_DB: {
         prepare: (query: string) => ({
           bind: (...values: unknown[]) => ({

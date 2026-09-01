@@ -68,13 +68,14 @@ export const deliverToRecipients = async (
       await options.onFailure?.(chatId, result);
     }
 
+    const delayMs = options.delayMs;
     const shouldDelay =
-      options.delayMs &&
-      options.delayMs > 0 &&
+      typeof delayMs === "number" &&
+      delayMs > 0 &&
       (options.includeTrailingDelay || index < chatIds.length - 1);
 
     if (shouldDelay) {
-      await sleep(options.delayMs);
+      await sleep(delayMs);
     }
   }
 

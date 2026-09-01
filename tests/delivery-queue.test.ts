@@ -1,5 +1,5 @@
 import { dispatchAlert, dispatchSubscriberAlertNow, processDeliveryBatch } from "../src/delivery-queue";
-import type { Env } from "../src/types";
+import type { DeliveryQueueMessage, Env } from "../src/types";
 
 const createSubscriptionsDb = (): D1Database => {
   let listed = false;
@@ -24,6 +24,20 @@ const createSubscriptionsDb = (): D1Database => {
     }),
   } as unknown as D1Database;
 };
+
+const createDeliveryBatch = (message: {
+  ack: ReturnType<typeof vi.fn>;
+  body: DeliveryQueueMessage;
+  id: string;
+  retry: ReturnType<typeof vi.fn>;
+}): MessageBatch<DeliveryQueueMessage> =>
+  ({
+    ackAll: vi.fn(),
+    messages: [message],
+    metadata: {},
+    queue: "telegram-delivery",
+    retryAll: vi.fn(),
+  }) as unknown as MessageBatch<DeliveryQueueMessage>;
 
 describe("subscriber alert delivery", () => {
   afterEach(() => {
@@ -109,42 +123,25 @@ describe("subscriber alert delivery", () => {
     };
 
     await processDeliveryBatch(
-      {
-        messages: [
-          {
-            ack,
-            body: {
-              alertId: "1:reset_confirmed",
-              chatIds: ["123"],
-              classification: { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
-              tweet: {
-                id: "1",
-                url: "https://x.com/thsottiaux/status/1",
-                createdAt: "2026-07-10T12:00:00.000Z",
-                fullText: "Codex limits are reset.",
-                authorUsername: "thsottiaux",
-                isReply: false,
-                isRetweet: false,
-              },
-            },
-            id: "message-1",
-            retry,
+      createDeliveryBatch({
+        ack,
+        body: {
+          alertId: "1:reset_confirmed",
+          chatIds: ["123"],
+          classification: { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
+          tweet: {
+            id: "1",
+            url: "https://x.com/thsottiaux/status/1",
+            createdAt: "2026-07-10T12:00:00.000Z",
+            fullText: "Codex limits are reset.",
+            authorUsername: "thsottiaux",
+            isReply: false,
+            isRetweet: false,
           },
-        ],
-      } as MessageBatch<{
-        alertId: string;
-        chatIds: string[];
-        classification: { verdict: "reset_confirmed"; confidence: number; rationale: string };
-        tweet: {
-          id: string;
-          url: string;
-          createdAt: string;
-          fullText: string;
-          authorUsername: string;
-          isReply: boolean;
-          isRetweet: boolean;
-        };
-      }>,
+        },
+        id: "message-1",
+        retry,
+      }),
       env,
     );
 
@@ -167,42 +164,25 @@ describe("subscriber alert delivery", () => {
     };
 
     const processing = processDeliveryBatch(
-      {
-        messages: [
-          {
-            ack,
-            body: {
-              alertId: "1:reset_confirmed",
-              chatIds: ["123"],
-              classification: { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
-              tweet: {
-                id: "1",
-                url: "https://x.com/thsottiaux/status/1",
-                createdAt: "2026-07-10T12:00:00.000Z",
-                fullText: "Codex limits are reset.",
-                authorUsername: "thsottiaux",
-                isReply: false,
-                isRetweet: false,
-              },
-            },
-            id: "message-2",
-            retry,
+      createDeliveryBatch({
+        ack,
+        body: {
+          alertId: "1:reset_confirmed",
+          chatIds: ["123"],
+          classification: { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
+          tweet: {
+            id: "1",
+            url: "https://x.com/thsottiaux/status/1",
+            createdAt: "2026-07-10T12:00:00.000Z",
+            fullText: "Codex limits are reset.",
+            authorUsername: "thsottiaux",
+            isReply: false,
+            isRetweet: false,
           },
-        ],
-      } as MessageBatch<{
-        alertId: string;
-        chatIds: string[];
-        classification: { verdict: "reset_confirmed"; confidence: number; rationale: string };
-        tweet: {
-          id: string;
-          url: string;
-          createdAt: string;
-          fullText: string;
-          authorUsername: string;
-          isReply: boolean;
-          isRetweet: boolean;
-        };
-      }>,
+        },
+        id: "message-2",
+        retry,
+      }),
       env,
     );
 

@@ -20,11 +20,12 @@ const dispatchQueuedAlert = async (
     throw new Error("SUBSCRIPTIONS_DB and TELEGRAM_DELIVERY_QUEUE are required for public subscriptions");
   }
 
+  const deliveryQueue = env.TELEGRAM_DELIVERY_QUEUE;
   const alertId = getAlertId(tweet, classification);
   let queuedCount = 0;
 
   await forEachActiveSubscriberChatBatch(env, async (chatIds) => {
-    await env.TELEGRAM_DELIVERY_QUEUE.send({
+    await deliveryQueue.send({
       alertId,
       chatIds,
       classification,
