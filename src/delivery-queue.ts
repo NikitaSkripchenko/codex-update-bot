@@ -102,6 +102,7 @@ const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Pro
     (chatId) => sendTelegramMessage(env, chatId, text),
     {
       delayMs,
+      includeTrailingDelay: true,
       formatRetryableError: (chatId, result) => `${chatId}: ${result.error}`,
       onFailure: (chatId, result) =>
         recordDeliveryFailure(env, message.alertId, chatId, result.error, result.permanent),

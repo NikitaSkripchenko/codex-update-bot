@@ -22,6 +22,7 @@ type FailedTelegramSendResult = Exclude<TelegramSendResult, { ok: true }>;
 
 export type DeliverToRecipientsOptions = {
   delayMs?: number;
+  includeTrailingDelay?: boolean;
   shouldDeliver?: (chatId: string) => boolean | Promise<boolean>;
   onSuccess?: (chatId: string) => void | Promise<void>;
   onFailure?: (chatId: string, result: FailedTelegramSendResult) => void | Promise<void>;
@@ -67,7 +68,12 @@ export const deliverToRecipients = async (
       await options.onFailure?.(chatId, result);
     }
 
-    if (options.delayMs && options.delayMs > 0 && index < chatIds.length - 1) {
+    const shouldDelay =
+      options.delayMs &&
+      options.delayMs > 0 &&
+      (options.includeTrailingDelay || index < chatIds.length - 1);
+
+    if (shouldDelay) {
       await sleep(options.delayMs);
     }
   }

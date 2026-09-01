@@ -57,6 +57,38 @@ describe("alert delivery", () => {
     expect(formatted.retryableErrors).toEqual(["temporary: temporary"]);
   });
 
+  it("adds a trailing delay only when explicitly requested", async () => {
+    vi.useFakeTimers();
+    const sent: string[] = [];
+
+    const processing = deliverToRecipients(
+      ["solo"],
+      async (chatId): Promise<TelegramSendResult> => {
+        sent.push(chatId);
+        return { ok: true, status: 200 };
+      },
+      {
+        delayMs: 25,
+        includeTrailingDelay: true,
+      },
+    );
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(24);
+    expect(sent).toEqual(["solo"]);
+
+    let settled = false;
+    void processing.then(() => {
+      settled = true;
+    });
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await processing;
+    expect(settled).toBe(true);
+    vi.useRealTimers();
+  });
+
   it("chunks active subscriber chats across pages of 500 into batches of 100", async () => {
     const pages = new Map<number, string[]>([
       [0, Array.from({ length: 250 }, (_, index) => `chat-${index + 1}`)],

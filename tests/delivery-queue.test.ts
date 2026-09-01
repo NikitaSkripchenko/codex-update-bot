@@ -151,4 +151,70 @@ describe("subscriber alert delivery", () => {
     expect(retry).toHaveBeenCalledTimes(1);
     expect(ack).not.toHaveBeenCalled();
   });
+
+  it("keeps queue delivery pending through the trailing send delay for a single recipient", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    const ack = vi.fn();
+    const retry = vi.fn();
+    const env: Env = {
+      MONITOR_STATE: {} as KVNamespace,
+      SUBSCRIPTIONS_DB: createSubscriptionsDb(),
+      TELEGRAM_BOT_TOKEN: "telegram-token",
+      TELEGRAM_SEND_DELAY_MS: "25",
+    };
+
+    const processing = processDeliveryBatch(
+      {
+        messages: [
+          {
+            ack,
+            body: {
+              alertId: "1:reset_confirmed",
+              chatIds: ["123"],
+              classification: { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
+              tweet: {
+                id: "1",
+                url: "https://x.com/thsottiaux/status/1",
+                createdAt: "2026-07-10T12:00:00.000Z",
+                fullText: "Codex limits are reset.",
+                authorUsername: "thsottiaux",
+                isReply: false,
+                isRetweet: false,
+              },
+            },
+            id: "message-2",
+            retry,
+          },
+        ],
+      } as MessageBatch<{
+        alertId: string;
+        chatIds: string[];
+        classification: { verdict: "reset_confirmed"; confidence: number; rationale: string };
+        tweet: {
+          id: string;
+          url: string;
+          createdAt: string;
+          fullText: string;
+          authorUsername: string;
+          isReply: boolean;
+          isRetweet: boolean;
+        };
+      }>,
+      env,
+    );
+
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(24);
+    expect(ack).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    await processing;
+
+    expect(ack).toHaveBeenCalledTimes(1);
+    expect(retry).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });
