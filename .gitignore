@@ -4,3 +4,5 @@ dist/
 .dev.vars
 wrangler.local.toml
 *.log
+.env.lab
+.local-lab/

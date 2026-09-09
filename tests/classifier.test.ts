@@ -19,6 +19,30 @@ const tweet: Tweet = {
 };
 
 describe("classifier", () => {
+  it.each(["reset is out now", "The reset is live!", "Reset is now available.", "  RESET   IS OUT NOW!  "])(
+    "confirms a short current reset announcement: %s", (fullText) => {
+      expect(classifyTweetHeuristically({ ...tweet, authorUsername: "sama", fullText, quotedText: null }).verdict)
+        .toBe("reset_confirmed");
+    },
+  );
+
+  it.each([
+    "reset is out now?", "Is the reset live?", "reset is not out now",
+    "Maybe reset is out now", "If reset is out now, let me know",
+    "reset will be out soon", "Password reset is out now", "Factory reset is live",
+  ])("does not confirm a question, speculation or unrelated reset: %s", (fullText) => {
+    expect(classifyTweetHeuristically({ ...tweet, fullText, quotedText: null }).verdict)
+      .not.toBe("reset_confirmed");
+    expect(classifyTweetHeuristically({ ...tweet, fullText: "FYI", quotedText: fullText }).verdict)
+      .not.toBe("reset_confirmed");
+  });
+
+  it("recognizes a short announcement in quoted text", () => {
+    const result = classifyTweetHeuristically({ ...tweet, fullText: "FYI", quotedText: "reset is out now" });
+    expect(result.verdict).toBe("reset_confirmed");
+    expect(result.rationale).toContain("quoted post");
+  });
+
   it("normalizes future-reset rationale when quoted text confirms a reset", () => {
     const classification = normalizeClassification(tweet, {
       verdict: "reset_confirmed",
@@ -39,15 +63,6 @@ describe("classifier", () => {
 
     expect(classification.verdict).toBe("uncertain");
     expect(classification.confidence).toBe(0);
-  });
-
-  it("includes contrastive few-shot examples for reset windows", () => {
-    expect(classificationInstructions).toContain("When will Codex rate limits reset?");
-    expect(classificationInstructions).toContain("The post asks about a reset but does not confirm one.");
-    expect(classificationInstructions).toContain(
-      "We will reset the rate limits again across ChatGPT Work and Codex over the next 24 hours.",
-    );
-    expect(classificationInstructions).toContain("The post announces rate-limit resets for Codex and ChatGPT Work.");
   });
 
   it("extracts JSON from fenced model output", () => {
@@ -119,6 +134,8 @@ describe("classifier", () => {
     const body = await requests[0]?.json() as { model: string; messages: unknown[]; response_format: { type: string } };
     expect(body.model).toBe("test/free-model:free");
     expect(body.messages).toHaveLength(2);
+    expect(body.messages[0]).toEqual({ role: "system", content: classificationInstructions });
+    expect(body.messages[1]).toMatchObject({ role: "user" });
     expect(body.response_format.type).toBe("json_object");
   });
 

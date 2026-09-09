@@ -65,7 +65,7 @@ The scheduled path should run every hour by default. That is frequent enough for
 
 The tweet provider fetches recent posts from configured accounts and normalizes them into the app's internal tweet shape.
 
-The reference project uses `rettiwt-api` and combines search plus timeline/replies fallback. This project keeps the same idea behind a `TweetProvider` module so the source can be swapped if X/Twitter access changes. The implementation uses this source order: custom `TWEET_PROVIDER_URL`, Jina Reader for public X profiles, Nitter RSS, then `rettiwt-api` guest/user fallback with Cloudflare `nodejs_compat`.
+The implementation uses authenticated `rettiwt-api` as its only tweet source, with Cloudflare `nodejs_compat`. It combines Rettiwt search, timeline, and replies responses for each configured account. A poll fails if any target account cannot be fetched so the monitor cannot silently skip an account.
 
 Internal tweet shape:
 
@@ -333,7 +333,7 @@ Cloudflare Worker secrets:
 - `TELEGRAM_CHAT_IDS`: optional comma-separated chat IDs for private v1 or bootstrap notifications.
 - `ADMIN_TELEGRAM_CHAT_IDS`: comma-separated chat IDs allowed to run admin-only commands.
 - `TELEGRAM_WEBHOOK_SECRET`: secret token expected in `X-Telegram-Bot-Api-Secret-Token` if inbound webhooks are enabled.
-- `RETTIWT_API_KEY`: optional Rettiwt user-auth API key; guest auth is used when omitted.
+- `RETTIWT_API_KEY`: required Rettiwt user-auth API key stored as a Worker secret.
 - `CRON_SECRET`: bearer token for manual `/run` calls.
 
 Cloudflare bindings:
@@ -347,10 +347,6 @@ Non-secret config:
 
 - `TARGET_USERNAME`: legacy single-account setting, defaults to `thsottiaux`.
 - `TARGET_USERNAMES`: optional comma-separated monitored accounts. Production defaults to `thsottiaux,sama`.
-- `TARGET_USER_IDS`: optional comma-separated Rettiwt user IDs aligned with `TARGET_USERNAMES`.
-- `NITTER_BASE_URL`: optional comma-separated preferred Nitter hosts; defaults to `https://nitter.net` with built-in public-instance fallbacks.
-- `JINA_READER_BASE_URL`: optional Jina Reader prefix for public X profiles; defaults to `https://r.jina.ai/https://x.com`.
-- `TWEET_PROVIDER_URL`: optional HTTP tweet-provider endpoint; preferred for Worker-native deployments.
 - `POLL_LOOKBACK_HOURS`: defaults to `24`.
 - `RECENT_DECISION_LIMIT`: defaults to `50`.
 - `PUBLIC_SUBSCRIPTIONS_ENABLED`: defaults to `false`; when `true`, use D1 subscriptions instead of only `TELEGRAM_CHAT_IDS`.

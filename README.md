@@ -6,6 +6,58 @@ The private v1 is cron-driven and outbound-only. Public subscription mode adds d
 
 ## Local Setup
 
+### Isolated local test environment
+
+Requires Node.js 22.16+ (Node 24 LTS recommended). Start the local web lab:
+
+```sh
+rtk npm install
+rtk npm run lab
+```
+
+Open [the local lab](http://localhost:8790). This is separate from `dashboard:dev`:
+it runs the existing monitor with local tweets, a disk-backed KV adapter, and a
+local notification inbox. It never fetches X tweets or sends Telegram messages.
+
+- Add tweets with an author, publication date, optional quoted text, and reply flag.
+  The monitored authors are `sama` and `thsottiaux`; other authors are ignored.
+- Run analysis manually, or start/pause the server timer (5–86400 seconds).
+  Each interval starts after the previous run finishes; runs never overlap.
+  Within a run, up to three tweets are classified concurrently. Each successful
+  decision is saved immediately; a failed tweet does not block the rest.
+  Closing the browser does not stop the timer. Stopping the server does.
+- Offline mode uses the existing heuristic classifier, explicitly labeled as a
+  simulation. It requires no credentials or network. Its verdicts can differ from AI.
+- OpenRouter mode calls the actual project classifier and shows model/token usage.
+  To enable it, copy `.env.lab.example` to `.env.lab`, set `OPENROUTER_API_KEY`,
+  restart the server, and choose OpenRouter in the UI. The selected model is editable.
+  Only this mode sends tweet text to OpenRouter. Provider fallback/error behavior
+  uses the production classifier, with a 120-second deadline per tweet (including
+  retries and response body). Provider errors pause the timer and are shown explicitly;
+  heuristic fallback is not saved as a real-model result. Progress remains visible
+  during manual runs.
+  The lab defaults to `nvidia/nemotron-3-super-120b-a12b:free`, disables reasoning,
+  and limits output to 512 tokens for short classification responses.
+- The first pass seeds history without alerts. Add another fresh reset tweet after
+  seeding to test a notification. Posts outside the 24-hour window do not alert.
+- State and settings survive restarts in `.local-lab/data.json`. Reset clears the
+  local timeline, decisions, inbox, and settings, and pauses the timer.
+  Limits: 500 tweets/decisions and the last 100 run records.
+
+The server binds to `127.0.0.1:8790`. `LAB_PORT` and `LAB_DATA_DIR` can override
+the port and storage path. `.env.lab` and `.local-lab/` are ignored by Git.
+Production `.dev.vars` and Cloudflare bindings are not loaded by this command.
+Restart `lab` after changing TypeScript; HTML/CSS/JS changes need a browser refresh.
+
+Verification:
+
+```sh
+rtk npm run typecheck
+rtk npm test
+```
+
+### Worker development
+
 ```sh
 npm install
 cp .dev.vars.example .dev.vars
@@ -61,19 +113,12 @@ For a group chat, add the bot to the group, send a message in the group, then ru
 
 ### Tweet Provider
 
-By default the app uses Jina Reader against the public X profiles, then falls back to Nitter RSS and `rettiwt-api` guest authentication. No Twitter/X key is required for private v1. The scheduled monitor makes one Jina request per configured account per hour; Jina's public unauthenticated Reader limit is currently sufficient for this workload.
+The app uses authenticated `rettiwt-api` as its only tweet source. The scheduled monitor fetches every configured account through Rettiwt and fails the poll if any account cannot be fetched, preventing silent monitoring gaps.
 
-Optional Rettiwt user auth:
+Rettiwt authentication is required:
 
-- Set `RETTIWT_API_KEY` only if guest auth stops working or you need user-authenticated resources.
+- Set `RETTIWT_API_KEY` before running the monitor.
 - The key is a base64 encoding of Twitter/X cookies, so treat it as a sensitive secret.
-
-Worker-native deployments can instead use an HTTP tweet-provider endpoint:
-
-- Set `TWEET_PROVIDER_URL` to an endpoint that returns recent tweets.
-- If the endpoint needs bearer auth, set `RETTIWT_API_KEY`; the Worker sends it as `Authorization: Bearer <key>`.
-
-Expected provider response can be either an array of tweets or an object with `list`, `data`, or `tweets`. Each tweet should include an ID, author username, text, and created date.
 
 ### Cron Secret
 
@@ -92,9 +137,10 @@ Required for private v1:
 - `OPENROUTER_API_KEY`
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_IDS`
+- `RETTIWT_API_KEY`
 - `CRON_SECRET`
 
-`rettiwt-api` is included as the built-in guest-auth fallback and requires Cloudflare `nodejs_compat`. For the most Worker-native deployment, set `TWEET_PROVIDER_URL` to an HTTP tweet-provider endpoint.
+`rettiwt-api` requires Cloudflare `nodejs_compat`, which is enabled in the Wrangler configuration.
 
 Optional:
 
@@ -103,9 +149,6 @@ Optional:
 - `OPENROUTER_APP_NAME`, optional attribution title, defaults to `Codex Limit Telegram Bot`
 - `TARGET_USERNAME`, legacy single-account setting, defaults to `thsottiaux`
 - `TARGET_USERNAMES`, optional comma-separated monitored accounts. Production defaults to `thsottiaux,sama`.
-- `TARGET_USER_IDS`, optional comma-separated Rettiwt user IDs aligned with `TARGET_USERNAMES`
-- `NITTER_BASE_URL`, optional comma-separated preferred Nitter hosts; defaults to `https://nitter.net` with built-in public-instance fallbacks
-- `JINA_READER_BASE_URL`, optional Jina Reader prefix; defaults to `https://r.jina.ai/https://x.com`
 - `POLL_LOOKBACK_HOURS`, defaults to `24`
 - `RECENT_DECISION_LIMIT`, defaults to `50`
 
@@ -152,19 +195,8 @@ Set required secrets:
 npx wrangler secret put OPENROUTER_API_KEY
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_IDS
-npx wrangler secret put CRON_SECRET
-```
-
-Optionally set Rettiwt user auth:
-
-```sh
 npx wrangler secret put RETTIWT_API_KEY
-```
-
-Or set `TWEET_PROVIDER_URL` as a non-secret var under the existing `[vars]` block in `wrangler.toml`:
-
-```toml
-TWEET_PROVIDER_URL = "https://example.com/recent-tweets"
+npx wrangler secret put CRON_SECRET
 ```
 
 Run a bundle dry-run:

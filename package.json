@@ -4,8 +4,9 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "lab": "node scripts/lab.mjs",
     "dev": "wrangler dev",
-    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free --var PUBLIC_SUBSCRIPTIONS_ENABLED:true --var TARGET_USERNAMES:thsottiaux,sama --var NITTER_BASE_URL:https://nt.vern.cc,https://nitter.net",
+    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free --var PUBLIC_SUBSCRIPTIONS_ENABLED:true --var TARGET_USERNAMES:thsottiaux,sama",
     "deploy": "wrangler deploy",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -17,6 +18,7 @@
     "rettiwt-api": "^7.0.2"
   },
   "devDependencies": {
+    "esbuild": "^0.28.0",
     "@cloudflare/workers-types": "latest",
     "typescript": "latest",
     "vitest": "latest",

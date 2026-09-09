@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Codex · Локальная лаборатория</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/">Codex <span>/ лаборатория</span></a><span class="local-badge">● Локальные данные</span></header>
+<main>
+  <div class="heading"><div><h1>Тестовое окружение</h1><p>Добавьте твит и проследите его путь от анализа до уведомления.</p></div><button id="run" class="primary">Анализировать сейчас</button></div>
+  <p id="feedback" role="status" aria-live="polite"></p>
+  <section class="timer" aria-label="Планировщик"><div><span class="label">Следующий анализ</span><strong id="countdown">Загрузка…</strong><span id="timer-note">Таймер работает на сервере</span></div><div class="timer-actions"><span id="mode-badge">Офлайн · симуляция</span><button id="toggle">Запустить таймер</button></div></section>
+  <div class="workspace">
+    <aside>
+      <section><h2>Добавить твит</h2><p class="hint">Монитор отслеживает @sama и @thsottiaux. Другие авторы будут пропущены.</p>
+      <form id="tweet-form">
+        <label>Автор<input name="authorUsername" value="sama" maxlength="15" required autocomplete="off"></label>
+        <label>Текст твита<textarea name="fullText" rows="5" maxlength="10000" required placeholder="Codex rate limits have been reset for everyone."></textarea></label>
+        <div class="presets" aria-label="Примеры твитов"><button type="button" data-example="reset">Сброс лимитов</button><button type="button" data-example="question">Вопрос</button><button type="button" data-example="other">Обычный пост</button></div>
+        <details><summary>Дата, цитата и ответ</summary><label>Дата публикации<input type="datetime-local" name="createdAt"><small>Пусто — текущее время. Старше 24 ч — без уведомления.</small></label><label>Цитируемый текст<textarea name="quotedText" rows="3" maxlength="10000"></textarea></label><label class="check"><input type="checkbox" name="isReply">Это ответ на другой твит</label></details>
+        <button type="submit" class="primary full">Добавить в локальную ленту</button>
+      </form></section>
+      <section class="settings"><h2>Настройки анализа</h2><form id="settings-form">
+        <label>Интервал, секунд<input id="interval" name="intervalSeconds" type="number" min="5" max="86400" value="30" required></label>
+        <label>Режим<select id="mode" name="mode"><option value="offline">Офлайн · эвристика</option><option value="openrouter">OpenRouter · настоящая модель</option></select></label>
+        <label>Модель OpenRouter<input id="model" name="model" required maxlength="200"></label>
+        <p id="credentials" class="hint"></p><button type="submit">Сохранить настройки</button>
+      </form><p class="hint">Офлайн-эвристика — симуляция, её выводы могут отличаться от модели. Уведомления в обоих режимах сохраняются здесь.</p></section>
+    </aside>
+    <div class="results">
+      <div class="tabs" role="tablist" aria-label="Результаты"><button role="tab" id="tab-tweets" aria-selected="true" aria-controls="tweets-panel" data-tab="tweets">Лента <span id="tweet-count">0</span></button><button role="tab" id="tab-alerts" aria-selected="false" aria-controls="alerts-panel" data-tab="alerts">Уведомления <span id="alert-count">0</span></button><button role="tab" id="tab-runs" aria-selected="false" aria-controls="runs-panel" data-tab="runs">Запуски</button></div>
+      <p class="seed-note">Первый анализ создаёт исходную историю без уведомлений. Затем добавляйте новые твиты для проверки доставки.</p>
+      <section id="tweets-panel" role="tabpanel" aria-labelledby="tab-tweets"><div id="tweets"></div></section>
+      <section id="alerts-panel" role="tabpanel" aria-labelledby="tab-alerts" hidden><p class="hint">Локальная имитация доставки: сообщения в Telegram не отправляются.</p><div id="alerts"></div></section>
+      <section id="runs-panel" role="tabpanel" aria-labelledby="tab-runs" hidden><div id="runs"></div></section>
+    </div>
+  </div>
+  <footer><span>Данные сохраняются на диске · .local-lab/data.json</span><button id="reset" class="danger">Сбросить окружение</button></footer>
+</main>
+</body></html>

@@ -73,14 +73,9 @@ export type Env = {
   ADMIN_TELEGRAM_CHAT_IDS?: string;
   TELEGRAM_WEBHOOK_SECRET?: string;
   RETTIWT_API_KEY?: string;
-  NITTER_BASE_URL?: string;
-  JINA_READER_BASE_URL?: string;
-  TWEET_PROVIDER_URL?: string;
   CRON_SECRET?: string;
   TARGET_USERNAME?: string;
   TARGET_USERNAMES?: string;
-  TARGET_USER_ID?: string;
-  TARGET_USER_IDS?: string;
   POLL_LOOKBACK_HOURS?: string;
   RECENT_DECISION_LIMIT?: string;
   PUBLIC_SUBSCRIPTIONS_ENABLED?: string;

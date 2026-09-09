@@ -16,9 +16,36 @@ import type { AlertEligibility, Classification, DispatchResult, Env, MonitorDeci
 const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export type MonitorDeps = {
+  classificationConcurrency?: number;
   fetchTweets?: (env: Env) => Promise<Tweet[]>;
   classify?: (env: Env, tweet: Tweet) => Promise<Classification>;
   dispatch?: (env: Env, tweet: Tweet, classification: Classification) => Promise<DispatchResult>;
+};
+
+// Classify concurrently; serialize state writes to avoid lost decisions.
+const classifyBatch = async (
+  tweets: Tweet[], env: Env, classify: (env: Env, tweet: Tweet) => Promise<Classification>,
+  consume: (tweet: Tweet, result: Classification) => Promise<void>, concurrency = 1,
+): Promise<void> => {
+  let cursor = 0;
+  let writes = Promise.resolve();
+  const errors: string[] = [];
+  const width = Number.isFinite(concurrency) ? Math.max(1, Math.min(5, Math.floor(concurrency))) : 1;
+  await Promise.all(Array.from({ length: Math.min(width, tweets.length) }, async () => {
+    while (cursor < tweets.length) {
+      const tweet = tweets[cursor++];
+      try {
+        const result = await classify(env, tweet);
+        const write = writes.then(() => consume(tweet, result));
+        writes = write.catch(() => undefined);
+        await write;
+      } catch (error) {
+        errors.push(`${tweet.id}: ${error instanceof Error ? error.message : String(error)}`);
+        if (width === 1) break;
+      }
+    }
+  }));
+  if (errors.length) throw new Error(errors.join("\n"));
 };
 
 const validateMonitorConfig = (env: Env, deps: MonitorDeps): void => {
@@ -108,19 +135,15 @@ const appendSeedDecisions = async (
   tweets: Tweet[],
   classify: (env: Env, tweet: Tweet) => Promise<Classification>,
   limit: number,
+  concurrency = 1,
 ): Promise<MonitorState> => {
   let nextState = state;
   const cachedTweetIds = new Set(state.recentDecisions.map((decision) => decision.tweetId));
 
-  for (const tweet of tweets.slice(-limit)) {
-    if (cachedTweetIds.has(tweet.id)) {
-      continue;
-    }
-
-    const classification = await classify(env, tweet);
+  await classifyBatch(tweets.slice(-limit).filter(tweet => !cachedTweetIds.has(tweet.id)), env, classify, async (tweet, classification) => {
     nextState = appendRecentDecision(nextState, createCachedDecision(tweet, classification, "initial_seed"), limit);
-    cachedTweetIds.add(tweet.id);
-  }
+    await writeMonitorState(env.MONITOR_STATE, { ...nextState, lastSeenTweetId: null, lastSeenTweetUrl: null });
+  }, concurrency);
 
   return nextState;
 };
@@ -291,7 +314,7 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
         lastError: null,
       };
 
-      state = await appendSeedDecisions(env, state, authoredTweets, classify, recentDecisionLimit);
+      state = await appendSeedDecisions(env, state, authoredTweets, classify, recentDecisionLimit, deps.classificationConcurrency);
 
       await writeMonitorState(env.MONITOR_STATE, state);
 
@@ -309,9 +332,8 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
       return !existing || shouldRefreshCachedDecision(existing);
     }).slice(-recentDecisionLimit);
 
-    for (const tweet of tweetsToProcess) {
+    await classifyBatch(tweetsToProcess, env, classify, async (tweet, classification) => {
       const existing = state.recentDecisions.find((decision) => decision.tweetId === tweet.id);
-      const classification = await classify(env, tweet);
       const alertEligibility = getAlertEligibility(tweet, existing);
       state = withMonotonicWatermark(state, tweet);
       state = await persistDecision(
@@ -353,7 +375,7 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
       if (alertEligibility === "eligible" && (advancedFromStartingWatermark || shouldDispatch)) {
         processedCount += 1;
       }
-    }
+    }, deps.classificationConcurrency);
 
     if (processedCount === 0) {
       await markChecked(env);

@@ -18,6 +18,27 @@ const createEnv = (): Env => ({
 });
 
 describe("monitor", () => {
+  it("persists parallel successes while another tweet is pending or fails, and retries missing seed decisions", async () => {
+    const env = createEnv();
+    let rejectSlow!: (error: Error) => void;
+    const slow = new Promise<never>((_resolve, reject) => { rejectSlow = reject; });
+    const classify = vi.fn(async (_env: Env, tweet: Tweet) => {
+      if (tweet.id === "1") return slow;
+      return { verdict: "not_reset" as const, confidence: 0.9, rationale: "ok" };
+    });
+    const deps = { classificationConcurrency: 3, fetchTweets: async () => [createTweet("1"), createTweet("2"), createTweet("3")], classify, dispatch: async () => ({ mode: "direct" as const, deliveredCount: 1, permanentFailureCount: 0 }) };
+    const run = runMonitor(env, deps);
+    await vi.waitFor(async () => expect((await readMonitorState(env.MONITOR_STATE)).recentDecisions).toHaveLength(2));
+    expect(classify).toHaveBeenCalledTimes(3);
+    const failed = expect(run).rejects.toThrow("provider failed");
+    rejectSlow(new Error("provider failed"));
+    await failed;
+    expect((await readMonitorState(env.MONITOR_STATE)).lastSeenTweetId).toBeNull();
+    const retry = vi.fn(async () => ({ verdict: "not_reset" as const, confidence: 0.9, rationale: "ok" }));
+    await runMonitor(env, { ...deps, classify: retry });
+    expect(retry).toHaveBeenCalledOnce();
+    expect((await readMonitorState(env.MONITOR_STATE)).recentDecisions).toHaveLength(3);
+  });
   afterEach(() => {
     vi.useRealTimers();
   });
