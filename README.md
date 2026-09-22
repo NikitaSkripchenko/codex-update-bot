@@ -38,6 +38,10 @@ local notification inbox. It never fetches X tweets or sends Telegram messages.
   during manual runs.
   The lab defaults to `nvidia/nemotron-3-super-120b-a12b:free`, disables reasoning,
   and limits output to 512 tokens for short classification responses.
+- Jev mode calls the production TypeSafe Choice classifier with its own
+  `TYPESAFE_API_KEY` and model setting (default `jev-1.13.0`). Results show both
+  Jev's confidence in the selected verdict and the probabilities it assigns to
+  `reset_confirmed`, `not_reset`, and `uncertain`.
 - The first pass seeds history without alerts. Add another fresh reset tweet after
   seeding to test a notification. Posts outside the 24-hour window do not alert.
 - State and settings survive restarts in `.local-lab/data.json`. Reset clears the
@@ -55,6 +59,37 @@ Verification:
 rtk npm run typecheck
 rtk npm test
 ```
+
+### Jev classifier evaluation
+
+The production monitor uses TypeSafe's pinned `jev-1.13.0` Choice model to
+return the same three verdicts as the retained OpenRouter classifier.
+Set `CLASSIFIER_PROVIDER = "openrouter"` in `wrangler.toml` and redeploy to roll back.
+There is no automatic OpenRouter fallback when Jev fails: the monitor records
+the error and retries on a later run. Jev does not generate an evidence-based explanation, so
+its `rationale` is a generic label; its confidence measures how concentrated
+the Choice probabilities are, not the probability that a reset actually occurred.
+
+Set both `OPENROUTER_API_KEY` and `TYPESAFE_API_KEY` in the ignored `.env.lab`
+file, then compare the classifiers on the same held-out cases:
+
+```sh
+rtk npm run eval:classifiers -- --no-table --no-share -j 6 --output .promptfoo/classifier-results.json
+```
+
+Promptfoo saves its local database and JSON results under ignored `.promptfoo/`.
+Provider errors are not counted as correct classifications. The production
+provider has a 30-second eval-only deadline per post to keep a stalled free
+model from hanging the run. Review both verdict accuracy and the false-positive
+and false-negative cases for `reset_confirmed` before changing production.
+To inspect runs in the browser:
+
+```sh
+PROMPTFOO_CONFIG_DIR=.promptfoo PROMPTFOO_DISABLE_WAL_MODE=true PROMPTFOO_DISABLE_TELEMETRY=true rtk npm exec -- promptfoo view --no --port 15500
+```
+
+Open [the local Promptfoo UI](http://localhost:15500/eval). No Telegram or
+Cloudflare requests are made by this evaluation.
 
 ### Worker development
 
@@ -86,7 +121,14 @@ Create an OpenRouter key:
 2. Create an API key.
 3. Use it as `OPENROUTER_API_KEY`.
 
-The default model is `nvidia/nemotron-3-super-120b-a12b:free`. OpenRouter free model availability can change, so check `https://openrouter.ai/models?max_price=0` and update `OPENROUTER_MODEL` in `wrangler.toml` if needed.
+The retained OpenRouter model is `nvidia/nemotron-3-ultra-550b-a55b:free`.
+OpenRouter free model availability can change; update `OPENROUTER_MODEL` in
+`wrangler.toml` if needed for rollback.
+
+### TypeSafe Jev
+
+Create a TypeSafe API key and add it to the Worker as `TYPESAFE_API_KEY` using
+`wrangler secret put`. Never put the key in `wrangler.toml` or commit it to Git.
 
 ### Telegram
 
@@ -134,7 +176,7 @@ Use the generated value as `CRON_SECRET`.
 
 Required for private v1:
 
-- `OPENROUTER_API_KEY`
+- `TYPESAFE_API_KEY` when `CLASSIFIER_PROVIDER = "jev"` (production default)
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_IDS`
 - `RETTIWT_API_KEY`
@@ -144,7 +186,10 @@ Required for private v1:
 
 Optional:
 
-- `OPENROUTER_MODEL`, defaults to `nvidia/nemotron-3-super-120b-a12b:free`
+- `CLASSIFIER_PROVIDER`, `jev` in production; `openrouter` selects the retained classifier for rollback
+- `TYPESAFE_MODEL`, defaults to pinned `jev-1.13.0`
+- `OPENROUTER_API_KEY`, required only when `CLASSIFIER_PROVIDER = "openrouter"` or for comparative evals
+- `OPENROUTER_MODEL`, defaults to `nvidia/nemotron-3-ultra-550b-a55b:free`
 - `OPENROUTER_SITE_URL`, optional attribution URL for OpenRouter rankings/analytics
 - `OPENROUTER_APP_NAME`, optional attribution title, defaults to `Codex Limit Telegram Bot`
 - `TARGET_USERNAME`, legacy single-account setting, defaults to `thsottiaux`
@@ -193,6 +238,7 @@ Set required secrets:
 
 ```sh
 npx wrangler secret put OPENROUTER_API_KEY
+npx wrangler secret put TYPESAFE_API_KEY
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_IDS
 npx wrangler secret put RETTIWT_API_KEY
@@ -225,7 +271,7 @@ npm run dashboard:dev
 open "http://localhost:8787/dashboard"
 ```
 
-`dashboard:dev` uses `wrangler.dashboard.toml`, which deliberately has no `preview_id`; Wrangler therefore binds `MONITOR_STATE` to the production namespace. It also forces the NVIDIA model configured for this project, overriding any stale `OPENROUTER_MODEL` in `.dev.vars`. Normal `npm run dev` uses local/preview state and will not show production decisions. The dashboard routes still return `404` on the public deployed Worker.
+`dashboard:dev` uses `wrangler.dashboard.toml`, which deliberately has no `preview_id`; Wrangler therefore binds `MONITOR_STATE` to the production namespace. It selects Jev for local re-evaluation; put `TYPESAFE_API_KEY` in ignored `.dev.vars` before using that action. Normal `npm run dev` uses local/preview state and will not show production decisions. The dashboard routes still return `404` on the public deployed Worker.
 
 If you run the dashboard through `npm run dev`, initialize its local D1 state once before opening `/dashboard`:
 

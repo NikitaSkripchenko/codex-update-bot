@@ -6,20 +6,28 @@
   "scripts": {
     "lab": "node scripts/lab.mjs",
     "dev": "wrangler dev",
-    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var OPENROUTER_MODEL:nvidia/nemotron-3-ultra-550b-a55b:free --var PUBLIC_SUBSCRIPTIONS_ENABLED:true --var TARGET_USERNAMES:thsottiaux,sama",
+    "dashboard:dev": "wrangler dev --config wrangler.dashboard.toml --var CLASSIFIER_PROVIDER:jev --var TYPESAFE_MODEL:jev-1.13.0 --var PUBLIC_SUBSCRIPTIONS_ENABLED:true --var TARGET_USERNAMES:thsottiaux,sama",
     "deploy": "wrangler deploy",
     "test": "vitest run",
+    "eval:classifiers": "PROMPTFOO_CONFIG_DIR=.promptfoo PROMPTFOO_DISABLE_WAL_MODE=true PROMPTFOO_DISABLE_TELEMETRY=true promptfoo eval -c promptfooconfig.js --no-cache",
     "typecheck": "tsc --noEmit",
     "check": "npm run typecheck && npm test",
     "db:migrate:local": "wrangler d1 migrations apply codex-limit-telegram-subscriptions --local",
     "db:migrate:remote": "wrangler d1 migrations apply codex-limit-telegram-subscriptions --remote"
   },
   "dependencies": {
+    "@typesafe-ai/sdk": "^0.6.0",
     "rettiwt-api": "^7.0.2"
   },
+  "overrides": {
+    "rettiwt-api": {
+      "axios": "1.18.1"
+    }
+  },
   "devDependencies": {
-    "esbuild": "^0.28.0",
     "@cloudflare/workers-types": "latest",
+    "esbuild": "^0.28.0",
+    "promptfoo": "^0.123.1",
     "typescript": "latest",
     "vitest": "latest",
     "wrangler": "latest"

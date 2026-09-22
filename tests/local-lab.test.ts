@@ -1,9 +1,46 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalLab } from "../src/local-lab";
+import type { JevClient } from "../src/jev-classifier";
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("local test environment", () => {
+  it("runs Jev with its own model and exposes confidence probabilities", async () => {
+    const client: JevClient = {
+      systemOne: async (request) => ({
+        model: request.model,
+        answers: {
+          verdict: {
+            type: "choice",
+            choice: "reset_confirmed",
+            confidence: 0.84,
+            probabilities: {
+              reset_confirmed: 0.87,
+              not_reset: 0.05,
+              uncertain: 0.08,
+            },
+          },
+        },
+        usage: { input_tokens: 40, output_tokens: 3 },
+      }),
+    };
+    const lab = new LocalLab(undefined, { typesafeApiKey: "typesafe-key", jevClient: client });
+    lab.configure({ mode: "jev", jevModel: "jev-1.13.0" });
+    lab.addTweet({ fullText: "Codex limits were reset", authorUsername: "sama" });
+
+    await lab.run();
+
+    expect(lab.snapshot().monitor.recentDecisions[0]).toMatchObject({
+      model: "jev-1.13.0",
+      confidence: 0.84,
+      probabilities: {
+        reset_confirmed: 0.87,
+        not_reset: 0.05,
+        uncertain: 0.08,
+      },
+    });
+  });
+
   it("shows original OpenRouter error metadata even in an HTTP 200 response", async () => {
     vi.useFakeTimers();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ error: { code: 429, message: "Provider overloaded", metadata: { provider_name: "Nvidia", raw: "capacity exhausted" } } }))));
@@ -104,6 +141,27 @@ describe("local test environment", () => {
     expect(() => lab.addTweet({ fullText: "hello", authorUsername: "bad/name" })).toThrow();
     expect(() => lab.configure({ intervalSeconds: 0 })).toThrow();
     expect(() => lab.configure({ mode: "openrouter" })).toThrow(/OPENROUTER/);
+    expect(() => lab.configure({ mode: "jev" })).toThrow(/TYPESAFE/);
+  });
+
+  it("migrates the legacy shared model setting into separate provider models", () => {
+    const original = new LocalLab().exportData();
+    const legacy = {
+      ...original,
+      settings: {
+        intervalSeconds: 30,
+        enabled: false,
+        mode: "offline",
+        model: "legacy/openrouter-model",
+      },
+    };
+
+    const restored = new LocalLab(legacy);
+
+    expect(restored.snapshot().settings).toMatchObject({
+      openRouterModel: "legacy/openrouter-model",
+      jevModel: "jev-1.13.0",
+    });
   });
 
   it("runs on a server timer, reschedules interval changes, and pauses", async () => {

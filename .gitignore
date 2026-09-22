@@ -6,3 +6,4 @@ wrangler.local.toml
 *.log
 .env.lab
 .local-lab/
+.promptfoo/

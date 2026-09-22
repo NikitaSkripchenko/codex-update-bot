@@ -19,8 +19,9 @@
       </form></section>
       <section class="settings"><h2>Настройки анализа</h2><form id="settings-form">
         <label>Интервал, секунд<input id="interval" name="intervalSeconds" type="number" min="5" max="86400" value="30" required></label>
-        <label>Режим<select id="mode" name="mode"><option value="offline">Офлайн · эвристика</option><option value="openrouter">OpenRouter · настоящая модель</option></select></label>
-        <label>Модель OpenRouter<input id="model" name="model" required maxlength="200"></label>
+        <label>Режим<select id="mode" name="mode"><option value="offline">Офлайн · эвристика</option><option value="jev">Jev · настоящая модель</option><option value="openrouter">OpenRouter · настоящая модель</option></select></label>
+        <label id="jev-model-field">Модель Jev<input id="jev-model" name="jevModel" required maxlength="200"></label>
+        <label id="openrouter-model-field">Модель OpenRouter<input id="openrouter-model" name="openRouterModel" required maxlength="200"></label>
         <p id="credentials" class="hint"></p><button type="submit">Сохранить настройки</button>
       </form><p class="hint">Офлайн-эвристика — симуляция, её выводы могут отличаться от модели. Уведомления в обоих режимах сохраняются здесь.</p></section>
     </aside>

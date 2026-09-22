@@ -12,6 +12,8 @@ head_sampling_rate = 1
 crons = ["0 * * * *"]
 
 [vars]
+CLASSIFIER_PROVIDER = "jev"
+TYPESAFE_MODEL = "jev-1.13.0"
 OPENROUTER_MODEL = "nvidia/nemotron-3-ultra-550b-a55b:free"
 OPENROUTER_APP_NAME = "Codex Limit Telegram Bot"
 TARGET_USERNAME = "thsottiaux"

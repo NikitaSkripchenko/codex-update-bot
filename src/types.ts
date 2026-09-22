@@ -1,4 +1,5 @@
 export type ClassificationVerdict = "reset_confirmed" | "not_reset" | "uncertain";
+export type ClassificationProbabilities = Partial<Record<ClassificationVerdict, number>>;
 export type AlertEligibility = "eligible" | "initial_seed" | "historical";
 
 export type Tweet = {
@@ -17,6 +18,7 @@ export type Tweet = {
 export type Classification = {
   verdict: ClassificationVerdict;
   confidence: number;
+  probabilities?: ClassificationProbabilities;
   rationale: string;
   model?: string;
   usage?: {
@@ -34,6 +36,7 @@ export type MonitorDecision = {
   tweetText?: string;
   verdict: ClassificationVerdict;
   confidence: number;
+  probabilities?: ClassificationProbabilities;
   rationale: string;
   model?: string;
   usage?: Classification["usage"];
@@ -68,6 +71,9 @@ export type Env = {
   OPENROUTER_MODEL?: string;
   OPENROUTER_SITE_URL?: string;
   OPENROUTER_APP_NAME?: string;
+  TYPESAFE_API_KEY?: string;
+  TYPESAFE_MODEL?: string;
+  CLASSIFIER_PROVIDER?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_IDS?: string;
   ADMIN_TELEGRAM_CHAT_IDS?: string;

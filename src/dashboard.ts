@@ -1,6 +1,7 @@
-import { classifyTweet, isOpenRouterFallbackRationale } from "./classifier";
+import { isOpenRouterFallbackRationale } from "./classifier";
+import { classifyConfiguredTweet, getConfiguredClassifierKeyName, getConfiguredClassifierModel } from "./classification-provider";
 import { dispatchAlert, dispatchSubscriberAlertNow } from "./delivery-queue";
-import { getEnvString, isPublicSubscriptionsEnabled, jsonResponse } from "./env";
+import { getEnvString, getErrorMessage, isPublicSubscriptionsEnabled, jsonResponse } from "./env";
 import { appendRecentDecision, patchMonitorState, readMonitorState } from "./state";
 import { getSubscriptionStats } from "./subscriptions";
 import type { Classification, DispatchResult, Env, MonitorDecision, MonitorState, Tweet } from "./types";
@@ -68,6 +69,7 @@ const createReevaluatedDecision = (
   tweetText: decision.tweetText,
   verdict: classification.verdict,
   confidence: classification.confidence,
+  probabilities: classification.probabilities,
   rationale: classification.rationale,
   model: classification.model,
   usage: classification.usage,
@@ -102,7 +104,7 @@ export const getDashboardData = async (env: Env): Promise<{
 
   return {
     state,
-    model: getEnvString(env.OPENROUTER_MODEL, "default OpenRouter model"),
+    model: getConfiguredClassifierModel(env),
     source: "Cloudflare KV binding: MONITOR_STATE",
     subscribers: subscriptionStats.active,
   };
@@ -111,8 +113,9 @@ export const getDashboardData = async (env: Env): Promise<{
 export const dashboardJsonResponse = async (env: Env): Promise<Response> => jsonResponse(await getDashboardData(env));
 
 export const dashboardReevaluateResponse = async (request: Request, env: Env, deps: DashboardDeps = {}): Promise<Response> => {
-  if (!getEnvString(env.OPENROUTER_API_KEY)) {
-    return jsonResponse({ ok: false, error: "OPENROUTER_API_KEY is required to re-evaluate locally." }, { status: 400 });
+  const keyName = getConfiguredClassifierKeyName(env);
+  if (!getEnvString(env[keyName])) {
+    return jsonResponse({ ok: false, error: `${keyName} is required to re-evaluate locally.` }, { status: 400 });
   }
 
   const state = await readMonitorState(env.MONITOR_STATE);
@@ -142,7 +145,15 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
   }
 
   const tweet = decisionToTweet(latestDecision);
-  const classification = await (deps.classify || classifyTweet)(env, tweet);
+  let classification: Classification;
+  try {
+    classification = await (deps.classify || classifyConfiguredTweet)(env, tweet);
+  } catch (error) {
+    return jsonResponse(
+      { ok: false, error: `Re-evaluation was not saved because ${getErrorMessage(error)}` },
+      { status: 503 },
+    );
+  }
 
   if (isOpenRouterFallbackRationale(classification.rationale)) {
     return jsonResponse(

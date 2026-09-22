@@ -20,6 +20,7 @@ export const createInitialMonitorState = (): MonitorState => ({
 const normalizeDecision = (value: unknown): MonitorDecision | null => {
   const decision = value as Partial<MonitorDecision> | null;
   const usage = decision?.usage as Partial<NonNullable<MonitorDecision["usage"]>> | undefined;
+  const rawProbabilities = decision?.probabilities;
 
   if (!decision || typeof decision.tweetId !== "string" || typeof decision.tweetUrl !== "string") {
     return null;
@@ -36,6 +37,13 @@ const normalizeDecision = (value: unknown): MonitorDecision | null => {
     tweetText: typeof decision.tweetText === "string" ? decision.tweetText : undefined,
     verdict: decision.verdict as MonitorDecision["verdict"],
     confidence: typeof decision.confidence === "number" ? decision.confidence : 0,
+    probabilities: rawProbabilities && typeof rawProbabilities === "object"
+      ? Object.fromEntries(
+          (["reset_confirmed", "not_reset", "uncertain"] as const)
+            .filter((key) => typeof rawProbabilities[key] === "number")
+            .map((key) => [key, rawProbabilities[key]]),
+        )
+      : undefined,
     rationale: typeof decision.rationale === "string" ? decision.rationale : "",
     model: typeof decision.model === "string" ? decision.model : undefined,
     usage: usage

@@ -91,6 +91,54 @@ describe("http dashboard", () => {
     expect(body.state?.recentDecisions).toEqual([]);
   });
 
+  it("shows the Jev model selected for dashboard reevaluation", async () => {
+    const env = { ...createEnv(), CLASSIFIER_PROVIDER: "jev", TYPESAFE_MODEL: "jev-1.13.0" };
+    const response = await handleHttpRequest(new Request("http://localhost:8787/dashboard.json"), env);
+    const body = await response.json() as { model?: string };
+    expect(body.model).toBe("jev-1.13.0");
+  });
+
+  it("requires the TypeSafe key, not OpenRouter, when Jev is selected", async () => {
+    const env = { ...createEnv(), CLASSIFIER_PROVIDER: "jev", OPENROUTER_API_KEY: "old-key" };
+    const response = await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tweetId: "1" }),
+      }),
+      env,
+    );
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("TYPESAFE_API_KEY") });
+  });
+
+  it("does not overwrite a cached decision when Jev fails during reevaluation", async () => {
+    const env = { ...createEnv(), CLASSIFIER_PROVIDER: "jev", TYPESAFE_API_KEY: "typesafe-key" };
+    await writeMonitorState(env.MONITOR_STATE, {
+      lastSeenTweetId: "1",
+      lastSeenTweetUrl: "https://x.com/sama/status/1",
+      lastCheckAt: new Date().toISOString(),
+      lastError: null,
+      recentDecisions: [{
+        tweetId: "1", tweetUrl: "https://x.com/sama/status/1", tweetCreatedAt: new Date().toISOString(),
+        tweetText: "Reset is live.", verdict: "not_reset", confidence: 0.8,
+        rationale: "Original decision.", alertedAt: new Date().toISOString(), deliveryMode: "cached",
+      }],
+    });
+    const dispatch = vi.fn(async () => ({ mode: "queued" as const, queuedCount: 2 }));
+
+    const response = await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tweetId: "1" }),
+      }),
+      env,
+      { classify: async () => { throw new Error("TypeSafe unavailable"); }, dispatch },
+    );
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining("TypeSafe unavailable") });
+    expect(dispatch).not.toHaveBeenCalled();
+    expect((await readMonitorState(env.MONITOR_STATE)).recentDecisions[0]?.rationale).toBe("Original decision.");
+  });
+
   it("shows the active subscriber count from D1", async () => {
     const env: Env = {
       ...createEnv(),

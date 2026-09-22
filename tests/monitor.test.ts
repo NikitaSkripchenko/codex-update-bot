@@ -18,6 +18,41 @@ const createEnv = (): Env => ({
 });
 
 describe("monitor", () => {
+  it("uses Jev for the configured production monitor", async () => {
+    const env: Env = {
+      ...createEnv(),
+      CLASSIFIER_PROVIDER: "jev",
+      TYPESAFE_API_KEY: "typesafe-key",
+    };
+    const requests: Request[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push(new Request(input, init));
+      return new Response(JSON.stringify({
+        model: "jev-1.13.0",
+        answers: { verdict: { type: "choice", choice: "not_reset", confidence: 0.95, probabilities: { reset_confirmed: 0.01, not_reset: 0.98, uncertain: 0.01 } } },
+        usage: { input_tokens: 100, output_tokens: 20 },
+      }), { headers: { "content-type": "application/json" } });
+    }));
+
+    await runMonitor(env, {
+      fetchTweets: async () => [createTweet("1")],
+      dispatch: async () => ({ mode: "direct", deliveredCount: 0, permanentFailureCount: 0 }),
+    });
+
+    const state = await readMonitorState(env.MONITOR_STATE);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url).toBe("https://api.typesafe.ai/v1/systemone");
+    expect(state.recentDecisions[0]).toMatchObject({ model: "jev-1.13.0", verdict: "not_reset" });
+  });
+
+  it("requires a TypeSafe key when Jev is selected", async () => {
+    const env = { ...createEnv(), CLASSIFIER_PROVIDER: "jev" };
+    await expect(runMonitor(env, {
+      fetchTweets: async () => [],
+      dispatch: async () => ({ mode: "direct", deliveredCount: 0, permanentFailureCount: 0 }),
+    })).rejects.toThrow("Missing monitor configuration: TYPESAFE_API_KEY");
+  });
+
   it("persists parallel successes while another tweet is pending or fails, and retries missing seed decisions", async () => {
     const env = createEnv();
     let rejectSlow!: (error: Error) => void;
@@ -41,6 +76,7 @@ describe("monitor", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("seeds the watermark on first run without alerting historical tweets", async () => {

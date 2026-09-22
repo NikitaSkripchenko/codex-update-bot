@@ -16,6 +16,7 @@ const { LocalLab } = await import(pathToFileURL(bundle).href);
 const dataPath = resolve(dataDir, "data.json");
 const lab = new LocalLab(existsSync(dataPath) ? JSON.parse(readFileSync(dataPath, "utf8")) : undefined, {
   apiKey: process.env.OPENROUTER_API_KEY,
+  typesafeApiKey: process.env.TYPESAFE_API_KEY,
   save(data) {
     const pending = `${dataPath}.tmp`;
     writeFileSync(pending, JSON.stringify(data, null, 2), { mode: 0o600 });

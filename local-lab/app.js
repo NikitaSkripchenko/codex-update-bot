@@ -8,6 +8,17 @@ const outcomes = { seeded: "Исходная история создана", pro
 const escape = (text) => String(text ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const date = (value) => new Date(value).toLocaleString("ru-RU");
 const empty = (title, description) => `<div class="empty"><strong>${title}</strong><p>${description}</p></div>`;
+const percent = (value) => `${Math.round(value * 100)}%`;
+const probabilityBreakdown = (decision) => {
+  const values = decision.probabilities;
+  if (![values?.reset_confirmed, values?.not_reset, values?.uncertain].every(Number.isFinite)) return "";
+  return `<span class="meta">Jev: сброс ${percent(values.reset_confirmed)} · не сброс ${percent(values.not_reset)} · неоднозначно ${percent(values.uncertain)}</span>`;
+};
+function renderModeFields() {
+  const mode = $("mode").value;
+  $("jev-model-field").hidden = mode !== "jev";
+  $("openrouter-model-field").hidden = mode !== "openrouter";
+}
 function feedback(message, error = false) { $("feedback").textContent = message; $("feedback").classList.toggle("error", error); }
 function countdown() {
   if (!state) return;
@@ -19,22 +30,25 @@ function countdown() {
 function render() {
   countdown();
   $("toggle").textContent = state.settings.enabled ? "Приостановить" : "Запустить таймер";
-  $("mode-badge").textContent = state.settings.mode === "offline" ? "Офлайн · симуляция" : "OpenRouter · модель";
+  $("mode-badge").textContent = state.settings.mode === "offline" ? "Офлайн · симуляция" : state.settings.mode === "jev" ? "Jev · модель" : "OpenRouter · модель";
   $("tweet-count").textContent = state.tweets.length;
   $("alert-count").textContent = state.alerts.length;
-  $("credentials").textContent = state.openRouterAvailable ? "Ключ OpenRouter настроен на сервере." : "Для OpenRouter: добавьте OPENROUTER_API_KEY в .env.lab и перезапустите сервер.";
+  $("credentials").textContent = `Jev: ${state.jevAvailable ? "ключ настроен" : "нужен TYPESAFE_API_KEY"}. OpenRouter: ${state.openRouterAvailable ? "ключ настроен" : "нужен OPENROUTER_API_KEY"}.`;
+  document.querySelector('#mode option[value="jev"]').disabled = !state.jevAvailable;
   document.querySelector('#mode option[value="openrouter"]').disabled = !state.openRouterAvailable;
   document.querySelectorAll("button").forEach((button) => { if (!button.dataset.tab) button.disabled = busy || state.running; });
   if (!initialized) {
     $("interval").value = state.settings.intervalSeconds;
     $("mode").value = state.settings.mode;
-    $("model").value = state.settings.model;
+    $("jev-model").value = state.settings.jevModel;
+    $("openrouter-model").value = state.settings.openRouterModel;
     initialized = true;
   }
+  renderModeFields();
   const decisions = new Map(state.monitor.recentDecisions.map((decision) => [decision.tweetId, decision]));
   $("tweets").innerHTML = [...state.tweets].reverse().map((tweet) => {
     const decision = decisions.get(tweet.id);
-    return `<article class="entry"><div class="entry-head"><span class="author">@${escape(tweet.authorUsername)}${tweet.isReply ? " · ответ" : ""}</span><span class="date">${escape(date(tweet.createdAt))}</span></div><p class="tweet-text">${escape(tweet.fullText)}</p>${tweet.quotedText ? `<p class="quote">${escape(tweet.quotedText)}</p>` : ""}<div class="decision">${decision ? `<span class="verdict ${decision.verdict}">${verdicts[decision.verdict]}</span><span class="meta">Уверенность ${Math.round(decision.confidence * 100)}% · ${escape(decision.model)}</span><p>${escape(decision.rationale)}</p><span class="meta">${eligibility[decision.alertEligibility] || ""}${decision.deliveryMode === "direct" ? " · локальное уведомление записано" : ""}${decision.usage ? ` · ${decision.usage.totalTokens} токенов` : ""}</span>` : `<span class="meta">${["sama", "thsottiaux"].includes(tweet.authorUsername) ? "Ожидает анализа" : "Пропущен: автор не отслеживается"}</span>`}</div></article>`;
+    return `<article class="entry"><div class="entry-head"><span class="author">@${escape(tweet.authorUsername)}${tweet.isReply ? " · ответ" : ""}</span><span class="date">${escape(date(tweet.createdAt))}</span></div><p class="tweet-text">${escape(tweet.fullText)}</p>${tweet.quotedText ? `<p class="quote">${escape(tweet.quotedText)}</p>` : ""}<div class="decision">${decision ? `<span class="verdict ${decision.verdict}">${verdicts[decision.verdict]}</span><span class="meta">Уверенность выбора ${percent(decision.confidence)} · ${escape(decision.model)}</span>${probabilityBreakdown(decision)}<p>${escape(decision.rationale)}</p><span class="meta">${eligibility[decision.alertEligibility] || ""}${decision.deliveryMode === "direct" ? " · локальное уведомление записано" : ""}${decision.usage ? ` · ${decision.usage.totalTokens} токенов` : ""}</span>` : `<span class="meta">${["sama", "thsottiaux"].includes(tweet.authorUsername) ? "Ожидает анализа" : "Пропущен: автор не отслеживается"}</span>`}</div></article>`;
   }).join("") || empty("Лента готова к тесту", "Добавьте первый твит слева или выберите пример. Затем запустите анализ.");
   $("alerts").innerHTML = state.alerts.map((alert) => `<article class="entry"><div class="entry-head"><strong class="reset_confirmed">Локальное уведомление</strong><span class="date">${escape(date(alert.at))}</span></div><p class="tweet-text">${escape(alert.tweet.fullText)}</p><p class="hint">${escape(alert.classification.rationale)}</p><span class="meta">@${escape(alert.tweet.authorUsername)} · ${escape(alert.classification.model)}</span></article>`).join("") || empty("Уведомлений пока нет", "После первого прохода добавьте свежий твит о сбросе лимитов и снова запустите анализ.");
   $("runs").innerHTML = state.runs.map((run) => `<div class="run-row"><span class="date">${escape(date(run.at))}</span><strong class="${run.error ? "error" : ""}">${escape(run.error || outcomes[run.outcome?.outcome])}</strong>${run.outcome ? `<div class="meta">Обработано: ${run.outcome.processedCount}</div>` : ""}</div>`).join("") || empty("Запусков пока нет", "Запустите анализ вручную или включите таймер.");
@@ -69,6 +83,7 @@ $("settings-form").addEventListener("submit", async (event) => {
   event.preventDefault(); const body = Object.fromEntries(new FormData(event.currentTarget)); body.intervalSeconds = Number(body.intervalSeconds);
   await action("/api/settings", body, "Настройки сохранены. Отсчёт таймера обновлён.");
 });
+$("mode").addEventListener("change", renderModeFields);
 $("run").onclick = () => action("/api/run", {}, "Анализ завершён. Результаты обновлены.");
 $("toggle").onclick = () => state && action("/api/settings", { enabled: !state.settings.enabled }, state.settings.enabled ? "Таймер приостановлен." : "Таймер запущен.");
 $("reset").onclick = async () => { if (confirm("Удалить все локальные твиты, решения и уведомления и сбросить настройки?")) { initialized = false; await action("/api/reset", {}, "Локальное окружение сброшено."); } };

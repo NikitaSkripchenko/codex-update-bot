@@ -1,4 +1,5 @@
-import { classifyTweet, isOpenRouterFallbackRationale } from "./classifier";
+import { isOpenRouterFallbackRationale } from "./classifier";
+import { classifyConfiguredTweet, getConfiguredClassifierKeyName } from "./classification-provider";
 import { getEnvString, getNumberEnv, getTargetUsernames, isPublicSubscriptionsEnabled } from "./env";
 import { dispatchAlert } from "./delivery-queue";
 import {
@@ -51,8 +52,11 @@ const classifyBatch = async (
 const validateMonitorConfig = (env: Env, deps: MonitorDeps): void => {
   const missing: string[] = [];
 
-  if (!deps.classify && !getEnvString(env.OPENROUTER_API_KEY)) {
-    missing.push("OPENROUTER_API_KEY");
+  if (!deps.classify) {
+    const keyName = getConfiguredClassifierKeyName(env);
+    if (!getEnvString(env[keyName])) {
+      missing.push(keyName);
+    }
   }
 
   if (!deps.dispatch && !getEnvString(env.TELEGRAM_BOT_TOKEN)) {
@@ -90,6 +94,7 @@ const createDecision = (
   tweetText: tweet.fullText,
   verdict: classification.verdict,
   confidence: classification.confidence,
+  probabilities: classification.probabilities,
   rationale: classification.rationale,
   model: classification.model,
   usage: classification.usage,
@@ -111,6 +116,7 @@ const createCachedDecision = (
   tweetText: tweet.fullText,
   verdict: classification.verdict,
   confidence: classification.confidence,
+  probabilities: classification.probabilities,
   rationale: classification.rationale,
   model: classification.model,
   usage: classification.usage,
@@ -237,6 +243,7 @@ const reconcilePendingAlerts = async (
     const classification: Classification = {
       verdict: decision.verdict,
       confidence: decision.confidence,
+      probabilities: decision.probabilities,
       rationale: decision.rationale,
       model: decision.model,
       usage: decision.usage,
@@ -279,7 +286,7 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
     let state = await readMonitorState(env.MONITOR_STATE);
     const targetUsernames = getTargetUsernames(env);
     const fetchTweets = deps.fetchTweets || fetchRecentTweets;
-    const classify = deps.classify || classifyTweet;
+    const classify = deps.classify || classifyConfiguredTweet;
     const dispatch = deps.dispatch || dispatchAlert;
     const recentDecisionLimit = getNumberEnv(env.RECENT_DECISION_LIMIT, 50);
     state = await reconcilePendingAlerts(env, state, dispatch, recentDecisionLimit);
