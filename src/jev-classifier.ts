@@ -35,7 +35,7 @@ const verdictQuestion = choice(
       include: [
         "Required reply, link, or conversation context is missing.",
       ],
-      exclude: "Do not use merely because an otherwise definite announcement is brief or omits repeated product terminology.",
+      exclude: "",
     },
   } as const,
 );
