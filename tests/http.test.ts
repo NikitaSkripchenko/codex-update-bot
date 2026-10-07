@@ -357,7 +357,7 @@ describe("http dashboard", () => {
     expect(state.recentDecisions[0]?.rationale).toBe("Original decision.");
   });
 
-  it("dispatches an alert only when reevaluation changes a decision to reset", async () => {
+  it.each(["reset_confirmed", "banked_reset"] as const)("dispatches a reevaluated %s only once", async (verdict) => {
     const env = {
       ...createEnv(),
       OPENROUTER_API_KEY: "openrouter-key",
@@ -382,7 +382,7 @@ describe("http dashboard", () => {
       ],
     });
     const dispatch = vi.fn(async () => ({ mode: "queued" as const, queuedCount: 2 }));
-    const classification = { verdict: "reset_confirmed" as const, confidence: 0.96, rationale: "Limits are reset." };
+    const classification = { verdict, confidence: 0.96, rationale: "Limits are reset." };
 
     const response = await dashboardReevaluateResponse(
       new Request("http://localhost:8787/dashboard/re-evaluate", {
@@ -397,7 +397,7 @@ describe("http dashboard", () => {
 
     expect(response.status).toBe(200);
     expect(dispatch).toHaveBeenCalledWith(env, expect.objectContaining({ id: "1" }), classification);
-    expect(state.recentDecisions[0]).toMatchObject({ deliveryMode: "queued", queuedCount: 2, verdict: "reset_confirmed" });
+    expect(state.recentDecisions[0]).toMatchObject({ deliveryMode: "queued", queuedCount: 2, verdict });
 
     await dashboardReevaluateResponse(
       new Request("http://localhost:8787/dashboard/re-evaluate", {
@@ -409,9 +409,16 @@ describe("http dashboard", () => {
       { classify: async () => classification, dispatch },
     );
 
+    const updatedClassification = { ...classification, verdict: verdict === "banked_reset" ? "reset_confirmed" as const : "banked_reset" as const };
+    await dashboardReevaluateResponse(
+      new Request("http://localhost:8787/dashboard/re-evaluate", {
+        body: JSON.stringify({ tweetId: "1" }), headers: { "content-type": "application/json" }, method: "POST",
+      }), env, { classify: async () => updatedClassification, dispatch },
+    );
+
     expect(dispatch).toHaveBeenCalledTimes(1);
     const repeatedState = await readMonitorState(env.MONITOR_STATE);
-    expect(repeatedState.recentDecisions[0]).toMatchObject({ deliveryMode: "queued", queuedCount: 2 });
+    expect(repeatedState.recentDecisions[0]).toMatchObject({ deliveryMode: "queued", queuedCount: 2, verdict: updatedClassification.verdict });
   });
 
   it("explicitly replays a fresh confirmed cached decision and records delivery", async () => {

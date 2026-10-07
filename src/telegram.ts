@@ -3,9 +3,11 @@ import { isOpenRouterFallbackRationale } from "./classifier";
 import { getLatestActiveReset } from "./state";
 import type { Classification, Env, MonitorState, Tweet } from "./types";
 import { callTelegram, type TelegramTransportFailure } from "./telegram-transport";
+import resetImage from "./reset-image.png";
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const SAFE_MESSAGE_LIMIT = 3900;
+const PHOTO_CAPTION_LIMIT = 1024;
 
 const escapeTelegramHtml = (value: string): string =>
   value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -55,8 +57,8 @@ const formatVerdictText = (verdict: Classification["verdict"]): string => {
     return "✅ Reset confirmed";
   }
 
-  if (verdict === "uncertain") {
-    return "⚠️ Uncertain";
+  if (verdict === "banked_reset") {
+    return "✅ Banked reset";
   }
 
   return "❌ Not reset";
@@ -95,6 +97,39 @@ export const formatAlertMessage = (tweet: Tweet, classification: Classification)
       telegramQuote(truncateForTelegram(tweet.fullText, 900), true),
     ].join("\n"),
   );
+
+export const formatAlertCaption = (tweet: Tweet, classification: Classification): string =>
+  truncateForTelegram(
+    [
+      "<b>Codex limit reset</b>",
+      telegramQuote(`${formatVerdict(classification)}\n${formatConfidence(classification.confidence)} confidence`),
+      `<b>Why it matters</b>\n${escapeTelegramHtml(truncateForTelegram(formatPublicRationale(classification.rationale), 220))}`,
+      "<b>Next step</b>\nOpen Codex or ChatGPT and retry the blocked task.",
+      telegramLink(tweet.url, `View post from @${tweet.authorUsername}`),
+      "<b>Original post</b>",
+      telegramQuote(truncateForTelegram(tweet.fullText, 280)),
+    ].join("\n\n"),
+    PHOTO_CAPTION_LIMIT,
+  );
+
+export const sendTelegramAlertPhoto = async (
+  env: Pick<Env, "TELEGRAM_BOT_TOKEN">,
+  chatId: string,
+  caption: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<TelegramSendResult> => {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("parse_mode", "HTML");
+  form.set("caption", truncateForTelegram(caption, PHOTO_CAPTION_LIMIT));
+  form.set("photo", new Blob([resetImage], { type: "image/png" }), "reset.png");
+
+  const result = await callTelegram<{ message_id?: number }>(env, "sendPhoto", form, fetchFn);
+  if (result.ok) {
+    return { ok: true, status: result.status, messageId: result.result?.message_id };
+  }
+  return result;
+};
 
 const getLatestDecision = (state: MonitorState): MonitorState["recentDecisions"][number] | undefined =>
   state.recentDecisions.find((decision) => decision.tweetId === state.lastSeenTweetId) ||

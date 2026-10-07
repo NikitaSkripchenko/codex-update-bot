@@ -15,7 +15,7 @@ describe("telegram", () => {
     expect(parseTelegramChatIds({ TELEGRAM_CHAT_IDS: "123, -456, ,789" })).toEqual(["123", "-456", "789"]);
   });
 
-  it("formats bounded alert messages", () => {
+  it.each([["reset_confirmed", "✅ Reset confirmed"], ["banked_reset", "✅ Banked reset"]] as const)("formats bounded %s alerts", (verdict, label) => {
     const text = formatAlertMessage(
       {
         id: "1",
@@ -27,14 +27,14 @@ describe("telegram", () => {
         isReply: false,
       },
       {
-        verdict: "reset_confirmed",
+        verdict,
         confidence: 0.93,
         rationale: "The post confirms reset.",
       },
     );
 
     expect(text).toContain("<b>Codex limit reset</b>");
-    expect(text).toContain("✅ Reset confirmed");
+    expect(text).toContain(label);
     expect(text).toContain('href="https://x.com/thsottiaux/status/1"');
     expect(text).toContain("<blockquote expandable>");
     expect(text.length).toBeLessThanOrEqual(3900);

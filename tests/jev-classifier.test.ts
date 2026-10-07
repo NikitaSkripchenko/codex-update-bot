@@ -13,7 +13,10 @@ const tweet: Tweet = {
 };
 
 describe("Jev classifier", () => {
-  it("asks Jev to choose the production classification verdict", async () => {
+  it.each([
+    ["reset_confirmed", { reset_confirmed: 0.96, not_reset: 0.01, banked_reset: 0.03 }],
+    ["banked_reset", { reset_confirmed: 0.03, not_reset: 0.01, banked_reset: 0.96 }],
+  ] as const)("preserves Jev verdict %s and its probabilities", async (verdict, probabilities) => {
     const requests: unknown[] = [];
     const client: JevClient = {
       systemOne: async (request) => {
@@ -23,13 +26,9 @@ describe("Jev classifier", () => {
           answers: {
             verdict: {
               type: "choice",
-              choice: "reset_confirmed",
+              choice: verdict,
               confidence: 0.94,
-              probabilities: {
-                reset_confirmed: 0.96,
-                not_reset: 0.01,
-                uncertain: 0.03,
-              },
+              probabilities,
             },
           },
           usage: { input_tokens: 321, output_tokens: 34 },
@@ -69,21 +68,17 @@ describe("Jev classifier", () => {
             criteria: {
               reset_confirmed: expect.any(Object),
               not_reset: expect.any(Object),
-              uncertain: expect.any(Object),
+              banked_reset: expect.any(Object),
             },
           },
         },
       },
     ]);
     expect(classification).toEqual({
-      verdict: "reset_confirmed",
+      verdict,
       confidence: 0.94,
-      probabilities: {
-        reset_confirmed: 0.96,
-        not_reset: 0.01,
-        uncertain: 0.03,
-      },
-      rationale: "Jev classifies the post as a confirmed usage-limit reset.",
+      probabilities,
+      rationale: expect.any(String),
       model: "jev-1.13.0",
       usage: {
         inputTokens: 321,
@@ -129,7 +124,7 @@ describe("Jev classifier", () => {
     const client: JevClient = {
       systemOne: async () => ({
         model: "jev-1.13.0",
-        answers: { verdict: { type: "choice", choice: "reset_confirmed", confidence: 0.9, probabilities: { reset_confirmed: 0.95, not_reset: 0.03, uncertain: 0.02 } } },
+        answers: { verdict: { type: "choice", choice: "reset_confirmed", confidence: 0.9, probabilities: { reset_confirmed: 0.95, not_reset: 0.03, banked_reset: 0.02 } } },
         usage: { input_tokens: 100, output_tokens: 20 },
       }),
     };
@@ -148,7 +143,7 @@ describe("Jev classifier", () => {
     const client: JevClient = {
       systemOne: async () => ({
         model: "jev-1.13.0",
-        answers: { verdict: { type: "choice", choice: "reset_confirmed", confidence: 0.9, probabilities: { reset_confirmed: 0.95, not_reset: 0.03, uncertain: 0.02 } } },
+        answers: { verdict: { type: "choice", choice: "reset_confirmed", confidence: 0.9, probabilities: { reset_confirmed: 0.95, not_reset: 0.03, banked_reset: 0.02 } } },
         usage: { input_tokens: 100, output_tokens: 20 },
       }),
     };

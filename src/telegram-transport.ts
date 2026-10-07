@@ -26,7 +26,7 @@ const isPermanentTelegramError = (status: number, description: string): boolean 
 export const callTelegram = async <T>(
   env: Pick<Env, "TELEGRAM_BOT_TOKEN">,
   method: string,
-  payload: Record<string, unknown>,
+  payload: Record<string, unknown> | FormData,
   fetchFn: typeof fetch = fetch,
 ): Promise<TelegramTransportResult<T>> => {
   const botToken = env.TELEGRAM_BOT_TOKEN?.trim();
@@ -37,10 +37,8 @@ export const callTelegram = async <T>(
 
   const response = await fetchFn(`https://api.telegram.org/bot${botToken}/${method}`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-    },
-    body: JSON.stringify(payload),
+    headers: payload instanceof FormData ? undefined : { "content-type": "application/json" },
+    body: payload instanceof FormData ? payload : JSON.stringify(payload),
   });
   const body = (await response.json().catch(() => null)) as
     | {

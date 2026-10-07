@@ -41,7 +41,7 @@ local notification inbox. It never fetches X tweets or sends Telegram messages.
 - Jev mode calls the production TypeSafe Choice classifier with its own
   `TYPESAFE_API_KEY` and model setting (default `jev-1.13.0`). Results show both
   Jev's confidence in the selected verdict and the probabilities it assigns to
-  `reset_confirmed`, `not_reset`, and `uncertain`.
+  `reset_confirmed`, `banked_reset`, and `not_reset`.
 - The first pass seeds history without alerts. Add another fresh reset tweet after
   seeding to test a notification. Posts outside the 24-hour window do not alert.
 - State and settings survive restarts in `.local-lab/data.json`. Reset clears the
@@ -80,8 +80,10 @@ rtk npm run eval:classifiers -- --no-table --no-share -j 6 --output .promptfoo/c
 Promptfoo saves its local database and JSON results under ignored `.promptfoo/`.
 Provider errors are not counted as correct classifications. The production
 provider has a 30-second eval-only deadline per post to keep a stalled free
-model from hanging the run. Review both verdict accuracy and the false-positive
-and false-negative cases for `reset_confirmed` before changing production.
+model from hanging the run. Review verdict accuracy and false positives/negatives for both successful
+classes (`reset_confirmed` and `banked_reset`) before changing production.
+The cases include accumulated allowance after a reset, ordinary replenishment,
+quoted evidence and denials, and routine rollover policy without a reset event.
 To inspect runs in the browser:
 
 ```sh
@@ -90,6 +92,13 @@ PROMPTFOO_CONFIG_DIR=.promptfoo PROMPTFOO_DISABLE_WAL_MODE=true PROMPTFOO_DISABL
 
 Open [the local Promptfoo UI](http://localhost:15500/eval). No Telegram or
 Cloudflare requests are made by this evaluation.
+
+`banked_reset` means accumulated usage allowance is available after a reset,
+including unused allowance carried over and added to the new allowance. Both
+successful classes trigger the same delivery behavior and share the existing
+`tweetId:reset_confirmed` delivery ledger ID to prevent duplicates. Old cached
+`uncertain` decisions are read as `not_reset`; their old three-class probability
+distributions are omitted because they describe different categories.
 
 ### Worker development
 
@@ -279,7 +288,7 @@ If you run the dashboard through `npm run dev`, initialize its local D1 state on
 npm run db:migrate:local
 ```
 
-Re-evaluating a cached decision that changes from `not_reset` or `uncertain` to `reset_confirmed` sends a subscriber alert and saves its delivery status to production KV. Other re-evaluations update the cached decision only. If OpenRouter is rate limited, the dashboard reports the error and preserves the existing production decision.
+Re-evaluating a cached decision that changes from `not_reset` to `reset_confirmed` or `banked_reset` sends a subscriber alert and saves its delivery status to production KV. Changing between the two successful categories updates the cached decision without another alert. Other re-evaluations update the cached decision only. If OpenRouter is rate limited, the dashboard reports the error and preserves the existing production decision.
 
 An operator can explicitly recover a fresh confirmed decision that was cached without delivery by posting `{"tweetId":"<id>","replayConfirmed":true}` to the local-only `/dashboard/re-evaluate` route. This operation reclassifies the saved post, rejects expired or seeded history, and uses the D1 delivery ledger to skip subscribers who already received the alert. Routine re-evaluation never replays an already-confirmed decision.
 
@@ -289,7 +298,7 @@ Trigger a manual run:
 curl -X POST https://<worker-url>/run -H "Authorization: Bearer <CRON_SECRET>"
 ```
 
-The first successful run seeds the watermark to the newest tweet and does not alert historical tweets. The cron trigger runs every hour after deployment.
+The first successful run seeds the watermark to the newest tweet and does not alert historical tweets. The cron trigger runs every 10 minutes after deployment.
 
 ## Public Subscription Mode
 
@@ -379,6 +388,6 @@ curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/deleteWebhook?drop_pendin
 - Duplicate Telegram `update_id` values are ignored.
 - Commands are rate-limited globally and per chat.
 - `/status` reads cached state only.
-- Subscribers only receive confirmed reset alerts; non-reset and uncertain tweets are cached for `/status` without fanout.
+- Subscribers only receive confirmed reset alerts; non-reset tweets are cached for `/status` without fanout.
 - Telegram `/run` does not execute the monitor; use authenticated HTTP `/run`.
 - Public fanout classifies once, enqueues delivery batches, and sends idempotently per `alert_id + chat_id`.

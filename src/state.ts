@@ -1,3 +1,4 @@
+import { isSuccessfulReset, isClassificationVerdict } from "./types";
 import { getErrorMessage } from "./env";
 import type { MonitorDecision, MonitorState } from "./types";
 
@@ -20,13 +21,17 @@ export const createInitialMonitorState = (): MonitorState => ({
 const normalizeDecision = (value: unknown): MonitorDecision | null => {
   const decision = value as Partial<MonitorDecision> | null;
   const usage = decision?.usage as Partial<NonNullable<MonitorDecision["usage"]>> | undefined;
-  const rawProbabilities = decision?.probabilities;
+  // Old distributions describe different categories; do not relabel them.
+  const rawProbabilities = decision?.probabilities && typeof decision.probabilities === "object" && "uncertain" in decision.probabilities
+    ? undefined : decision?.probabilities;
+  const rawVerdict: unknown = decision?.verdict;
+  const verdict = rawVerdict === "uncertain" ? "not_reset" : rawVerdict;
 
   if (!decision || typeof decision.tweetId !== "string" || typeof decision.tweetUrl !== "string") {
     return null;
   }
 
-  if (!["reset_confirmed", "not_reset", "uncertain"].includes(String(decision.verdict))) {
+  if (!isClassificationVerdict(verdict)) {
     return null;
   }
 
@@ -35,11 +40,11 @@ const normalizeDecision = (value: unknown): MonitorDecision | null => {
     tweetUrl: decision.tweetUrl,
     tweetCreatedAt: typeof decision.tweetCreatedAt === "string" ? decision.tweetCreatedAt : "",
     tweetText: typeof decision.tweetText === "string" ? decision.tweetText : undefined,
-    verdict: decision.verdict as MonitorDecision["verdict"],
+    verdict,
     confidence: typeof decision.confidence === "number" ? decision.confidence : 0,
     probabilities: rawProbabilities && typeof rawProbabilities === "object"
       ? Object.fromEntries(
-          (["reset_confirmed", "not_reset", "uncertain"] as const)
+          (["reset_confirmed", "banked_reset", "not_reset"] as const)
             .filter((key) => typeof rawProbabilities[key] === "number")
             .map((key) => [key, rawProbabilities[key]]),
         )
@@ -133,7 +138,7 @@ export const getLatestActiveReset = (
 ): MonitorDecision | undefined =>
   state.recentDecisions
     .filter((decision) => {
-      if (decision.verdict !== "reset_confirmed") {
+      if (!isSuccessfulReset(decision.verdict)) {
         return false;
       }
 

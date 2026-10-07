@@ -1,4 +1,4 @@
-import { dispatchAlert, dispatchSubscriberAlertNow, processDeliveryBatch } from "../src/delivery-queue";
+import { getAlertId, dispatchAlert, dispatchSubscriberAlertNow, processDeliveryBatch } from "../src/delivery-queue";
 import type { DeliveryQueueMessage, Env } from "../src/types";
 
 const createSubscriptionsDb = (): D1Database => {
@@ -44,8 +44,14 @@ describe("subscriber alert delivery", () => {
     vi.unstubAllGlobals();
   });
 
-  it("delivers a reset transition directly to active subscribers", async () => {
-    const fetchMock = vi.fn(async (_input: RequestInfo | URL) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+  it("uses the same delivery ledger ID for both successful reset categories", () => {
+    const tweet = { id: "1", url: "url", createdAt: "", fullText: "", authorUsername: "sama", isReply: false, isRetweet: false };
+    expect(getAlertId(tweet, { verdict: "banked_reset", confidence: 0.9, rationale: "Banked usage" })).toBe("1:reset_confirmed");
+    expect(getAlertId(tweet, { verdict: "reset_confirmed", confidence: 0.9, rationale: "Reset" })).toBe("1:reset_confirmed");
+  });
+
+  it.each(["reset_confirmed", "banked_reset"] as const)("delivers %s directly to active subscribers", async (verdict) => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock as typeof fetch);
     const env: Env = {
       MONITOR_STATE: {} as KVNamespace,
@@ -64,13 +70,20 @@ describe("subscriber alert delivery", () => {
         isReply: false,
         isRetweet: false,
       },
-      { verdict: "reset_confirmed", confidence: 0.96, rationale: "Limits are reset." },
+      { verdict, confidence: 0.96, rationale: "Limits are reset." },
     );
 
     expect(result).toEqual({ mode: "direct", deliveredCount: 2, permanentFailureCount: 0 });
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/sendMessage");
-    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/sendMessage");
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/sendPhoto");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/sendPhoto");
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("caption")).toContain("Codex limit reset");
+    expect(form.get("caption")).toContain("View post from @thsottiaux");
+    expect(String(form.get("caption")).length).toBeLessThanOrEqual(1024);
+    const photo = form.get("photo");
+    expect(photo).toBeInstanceOf(Blob);
+    expect((photo as unknown as Blob).size).toBeGreaterThan(100_000);
   });
 
   it("reports private direct delivery with permanent failures preserved in counts", async () => {

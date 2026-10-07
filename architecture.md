@@ -173,13 +173,14 @@ Verdicts:
 
 - `reset_confirmed`: the tweet or quoted tweet clearly says limits/caps/rate limits reset, were lifted, or usage is available again now.
 - `not_reset`: the tweet is unrelated or does not indicate a current reset.
-- `uncertain`: the tweet might be about a reset but is not explicit enough to treat as confirmed.
+- `banked_reset`: accumulated usage allowance is available after a reset, including unused allowance carried forward and added to fresh quota.
+- Questions, speculation, and missing context belong to `not_reset`.
 
 Response shape:
 
 ```ts
 type Classification = {
-  verdict: "reset_confirmed" | "not_reset" | "uncertain";
+  verdict: "reset_confirmed" | "banked_reset" | "not_reset";
   confidence: number;
   rationale: string;
 };
@@ -188,10 +189,10 @@ type Classification = {
 Classification policy:
 
 - Prefer caution over false positives.
-- Future reset discussion is not a current reset.
+- A definite future reset within a stated time window counts as `reset_confirmed`; questions and speculation do not. Preserve future timing in the rationale.
 - If a quoted tweet provides the reset evidence, the rationale should say so.
 - The rationale should be one short sentence because it appears in Telegram.
-- Every new tweet gets classified and cached. Only `reset_confirmed` tweets trigger Telegram alerts.
+- Every new tweet gets classified and cached. Both `reset_confirmed` and `banked_reset` tweets trigger Telegram alerts.
 
 ### Telegram Notifier
 
@@ -214,7 +215,7 @@ Text:
 
 Notification rules:
 
-- Send one Telegram message per unseen `reset_confirmed` tweet.
+- Send one Telegram message per unseen `reset_confirmed` or `banked_reset` tweet. Both use `tweetId:reset_confirmed` for delivery deduplication.
 - Send to one or more configured chat IDs.
 - Escape Markdown or use Telegram HTML parse mode carefully to avoid malformed messages.
 - Truncate long tweet text to keep alerts readable.
@@ -449,5 +450,5 @@ Optional later additions:
 - Telegram commands such as `/last` and `/pause`.
 - Multiple watched accounts.
 - Per-chat subscription preferences.
-- Alert only on `reset_confirmed` with a separate quiet log for other tweets.
+- Alert only on `reset_confirmed` or `banked_reset` with a separate quiet log for other tweets.
 - A public status page if Telegram delivery becomes degraded often enough that users need a fallback.

@@ -17,7 +17,7 @@ describe("local test environment", () => {
             probabilities: {
               reset_confirmed: 0.87,
               not_reset: 0.05,
-              uncertain: 0.08,
+              banked_reset: 0.08,
             },
           },
         },
@@ -36,7 +36,7 @@ describe("local test environment", () => {
       probabilities: {
         reset_confirmed: 0.87,
         not_reset: 0.05,
-        uncertain: 0.08,
+        banked_reset: 0.08,
       },
     });
   });

@@ -1,3 +1,4 @@
+import { isSuccessfulReset } from "./types";
 import { getErrorMessage, getNumberEnv, isPublicSubscriptionsEnabled } from "./env";
 import { deliverToRecipients, forEachActiveSubscriberChatBatch } from "./alert-delivery";
 import {
@@ -5,11 +6,11 @@ import {
   recordDeliveryFailure,
   recordDeliverySuccess,
 } from "./subscriptions";
-import { formatAlertMessage, parseTelegramChatIds, sendTelegramMessage } from "./telegram";
+import { formatAlertCaption, parseTelegramChatIds, sendTelegramAlertPhoto } from "./telegram";
 import type { Classification, DeliveryQueueMessage, DispatchResult, Env, Tweet } from "./types";
 
 export const getAlertId = (tweet: Tweet, classification: Classification): string =>
-  `${tweet.id}:${classification.verdict}`;
+  `${tweet.id}:${isSuccessfulReset(classification.verdict) ? "reset_confirmed" : classification.verdict}`;
 
 const dispatchQueuedAlert = async (
   env: Env,
@@ -53,10 +54,10 @@ const dispatchDirectAlert = async (
     throw new Error("Missing TELEGRAM_CHAT_IDS");
   }
 
-  const message = formatAlertMessage(tweet, classification);
+  const message = formatAlertCaption(tweet, classification);
   const { deliveredCount, permanentFailureCount, retryableErrors } = await deliverToRecipients(
     chatIds,
-    (chatId) => sendTelegramMessage(env, chatId, message),
+    (chatId) => sendTelegramAlertPhoto(env, chatId, message),
   );
 
   if (retryableErrors.length > 0) {
@@ -92,15 +93,15 @@ type SubscriberDeliveryResult = {
 };
 
 const deliverQueueMessage = async (env: Env, message: DeliveryQueueMessage): Promise<SubscriberDeliveryResult> => {
-  if (message.classification.verdict !== "reset_confirmed") {
+  if (!isSuccessfulReset(message.classification.verdict)) {
     return { deliveredCount: 0, permanentFailureCount: 0 };
   }
 
-  const text = formatAlertMessage(message.tweet, message.classification);
+  const text = formatAlertCaption(message.tweet, message.classification);
   const delayMs = getNumberEnv(env.TELEGRAM_SEND_DELAY_MS, 40);
   const { deliveredCount, permanentFailureCount, retryableErrors } = await deliverToRecipients(
     message.chatIds,
-    (chatId) => sendTelegramMessage(env, chatId, text),
+    (chatId) => sendTelegramAlertPhoto(env, chatId, text),
     {
       delayMs,
       includeTrailingDelay: true,

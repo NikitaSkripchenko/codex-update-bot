@@ -1,4 +1,8 @@
-export type ClassificationVerdict = "reset_confirmed" | "not_reset" | "uncertain";
+export type ClassificationVerdict = "reset_confirmed" | "banked_reset" | "not_reset";
+export const isClassificationVerdict = (value: unknown): value is ClassificationVerdict =>
+  value === "reset_confirmed" || value === "banked_reset" || value === "not_reset";
+export const isSuccessfulReset = (verdict: ClassificationVerdict): boolean =>
+  verdict === "reset_confirmed" || verdict === "banked_reset";
 export type ClassificationProbabilities = Partial<Record<ClassificationVerdict, number>>;
 export type AlertEligibility = "eligible" | "initial_seed" | "historical";
 

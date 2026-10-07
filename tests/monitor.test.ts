@@ -29,7 +29,7 @@ describe("monitor", () => {
       requests.push(new Request(input, init));
       return new Response(JSON.stringify({
         model: "jev-1.13.0",
-        answers: { verdict: { type: "choice", choice: "not_reset", confidence: 0.95, probabilities: { reset_confirmed: 0.01, not_reset: 0.98, uncertain: 0.01 } } },
+        answers: { verdict: { type: "choice", choice: "not_reset", confidence: 0.95, probabilities: { reset_confirmed: 0.01, not_reset: 0.98, banked_reset: 0.01 } } },
         usage: { input_tokens: 100, output_tokens: 20 },
       }), { headers: { "content-type": "application/json" } });
     }));
@@ -150,7 +150,7 @@ describe("monitor", () => {
     expect(state.recentDecisions[0]?.tweetText).toBe("tweet 4");
   });
 
-  it("monitors every configured target username", async () => {
+  it.each(["reset_confirmed", "banked_reset"] as const)("monitors every target and dispatches %s", async (verdict) => {
     const env = {
       ...createEnv(),
       TARGET_USERNAMES: "thsottiaux,sama",
@@ -164,7 +164,7 @@ describe("monitor", () => {
     const dispatched: string[] = [];
     const outcome = await runMonitor(env, {
       fetchTweets: async () => [createTweet("1"), createTweet("2", "sama"), createTweet("3"), createTweet("4", "sama")],
-      classify: async () => ({ verdict: "reset_confirmed", confidence: 0.95, rationale: "yes" }),
+      classify: async () => ({ verdict, confidence: 0.95, rationale: "yes" }),
       dispatch: async (_env, tweet) => {
         dispatched.push(tweet.url);
         return { mode: "queued", queuedCount: 10 };
@@ -175,7 +175,7 @@ describe("monitor", () => {
     expect(dispatched).toEqual(["https://x.com/thsottiaux/status/3", "https://x.com/sama/status/4"]);
   });
 
-  it("persists a pending alert when dispatch fails and retries it on the next run", async () => {
+  it.each(["reset_confirmed", "banked_reset"] as const)("persists and retries a failed %s alert", async (verdict) => {
     const env = createEnv();
     await runMonitor(env, {
       fetchTweets: async () => [createTweet("1")],
@@ -186,7 +186,7 @@ describe("monitor", () => {
     await expect(
       runMonitor(env, {
         fetchTweets: async () => [createTweet("1"), createTweet("2")],
-        classify: async () => ({ verdict: "reset_confirmed", confidence: 0.9, rationale: "yes" }),
+        classify: async () => ({ verdict, confidence: 0.9, rationale: "yes" }),
         dispatch: async () => {
           throw new Error("telegram down");
         },
@@ -198,7 +198,7 @@ describe("monitor", () => {
     expect(state.lastError).toContain("telegram down");
     expect(state.recentDecisions[0]).toMatchObject({
       tweetId: "2",
-      verdict: "reset_confirmed",
+      verdict,
       deliveryMode: "cached",
       alertEligibility: "eligible",
     });

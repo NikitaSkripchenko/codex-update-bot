@@ -1,3 +1,4 @@
+import { isSuccessfulReset } from "./types";
 import { isOpenRouterFallbackRationale } from "./classifier";
 import { classifyConfiguredTweet, getConfiguredClassifierKeyName } from "./classification-provider";
 import { getEnvString, getNumberEnv, getTargetUsernames, isPublicSubscriptionsEnabled } from "./env";
@@ -133,7 +134,7 @@ const shouldRefreshCachedDecision = (decision: MonitorState["recentDecisions"][n
   return isOpenRouterFallbackRationale(decision.rationale);
 };
 
-const shouldDispatchAlert = (classification: Classification): boolean => classification.verdict === "reset_confirmed";
+const shouldDispatchAlert = (classification: Classification): boolean => isSuccessfulReset(classification.verdict);
 
 const appendSeedDecisions = async (
   env: Env,
@@ -226,7 +227,7 @@ const reconcilePendingAlerts = async (
   let nextState = state;
   const pending = state.recentDecisions.filter(
     (decision) =>
-      decision.verdict === "reset_confirmed" &&
+      isSuccessfulReset(decision.verdict) &&
       decision.deliveryMode === "cached" &&
       decision.alertEligibility === "eligible",
   );
@@ -368,7 +369,7 @@ export const runMonitor = async (env: Env, deps: MonitorDeps = {}): Promise<Moni
         );
       }
 
-      if (classification.verdict === "reset_confirmed" && alertEligibility !== "eligible") {
+      if (isSuccessfulReset(classification.verdict) && alertEligibility !== "eligible") {
         console.log(JSON.stringify({
           event: "monitor_alert_suppressed",
           tweetId: tweet.id,

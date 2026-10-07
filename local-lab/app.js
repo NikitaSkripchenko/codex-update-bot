@@ -2,7 +2,7 @@ const $ = (id) => document.getElementById(id);
 let state;
 let busy = false;
 let initialized = false;
-const verdicts = { reset_confirmed: "Сброс подтверждён", not_reset: "Не сброс", uncertain: "Неоднозначно" };
+const verdicts = { reset_confirmed: "Сброс подтверждён", not_reset: "Не сброс", banked_reset: "Накопленный запас" };
 const eligibility = { initial_seed: "Исходная история · без уведомления", historical: "Вне окна 24 ч · без уведомления", eligible: "В окне уведомления" };
 const outcomes = { seeded: "Исходная история создана", processed: "Новые твиты обработаны", no_tweets: "Нет подходящих твитов", no_new_tweets: "Нет новых твитов", locked: "Монитор занят" };
 const escape = (text) => String(text ?? "").replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
@@ -11,8 +11,8 @@ const empty = (title, description) => `<div class="empty"><strong>${title}</stro
 const percent = (value) => `${Math.round(value * 100)}%`;
 const probabilityBreakdown = (decision) => {
   const values = decision.probabilities;
-  if (![values?.reset_confirmed, values?.not_reset, values?.uncertain].every(Number.isFinite)) return "";
-  return `<span class="meta">Jev: сброс ${percent(values.reset_confirmed)} · не сброс ${percent(values.not_reset)} · неоднозначно ${percent(values.uncertain)}</span>`;
+  if (![values?.reset_confirmed, values?.not_reset, values?.banked_reset].every(Number.isFinite)) return "";
+  return `<span class="meta">Jev: сброс ${percent(values.reset_confirmed)} · не сброс ${percent(values.not_reset)} · накопленный запас ${percent(values.banked_reset)}</span>`;
 };
 function renderModeFields() {
   const mode = $("mode").value;

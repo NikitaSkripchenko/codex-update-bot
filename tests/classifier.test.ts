@@ -54,15 +54,22 @@ describe("classifier", () => {
     expect(classification.rationale).toContain("Quoted post confirms");
   });
 
-  it("defaults invalid verdicts to uncertain", () => {
+  it("defaults invalid verdicts to not_reset", () => {
     const classification = normalizeClassification(tweet, {
       verdict: "bad" as never,
       confidence: Number.NaN,
       rationale: "",
     });
 
-    expect(classification.verdict).toBe("uncertain");
+    expect(classification.verdict).toBe("not_reset");
     expect(classification.confidence).toBe(0);
+  });
+
+  it("preserves a banked reset returned by the model", () => {
+    const result = normalizeClassification({ ...tweet, fullText: "Codex allowance has accumulated after the reset.", quotedText: null }, {
+      verdict: "banked_reset", confidence: 0.95, rationale: "Accumulated allowance is available.",
+    });
+    expect(result.verdict).toBe("banked_reset");
   });
 
   it("extracts JSON from fenced model output", () => {
@@ -160,7 +167,7 @@ describe("classifier", () => {
       },
     );
 
-    expect(classification.verdict).toBe("uncertain");
+    expect(classification.verdict).toBe("not_reset");
     expect(classification.rationale).toContain("OpenRouter returned 429");
   });
 
@@ -199,7 +206,7 @@ describe("classifier", () => {
       },
     );
 
-    expect(classification.verdict).toBe("uncertain");
+    expect(classification.verdict).toBe("not_reset");
     expect(classification.rationale).toContain("OpenRouter returned an empty classification response");
     expect(classification.model).toBe("test/free-model:free");
     expect(classification.usage?.totalTokens).toBe(10);
@@ -465,7 +472,16 @@ describe("classifier", () => {
       quotedText: null,
     });
 
-    expect(classification.verdict).toBe("uncertain");
+    expect(classification.verdict).toBe("not_reset");
+  });
+
+  it.each([
+    "My Codex limits reset in four hours.",
+    "Your Codex limits reset every week.",
+    "My Codex limit will reset tomorrow.",
+  ])("heuristic does not alert on routine reset mechanics: %s", (fullText) => {
+    expect(classifyTweetHeuristically({ ...tweet, fullText, quotedText: null }).verdict).toBe("not_reset");
+    expect(classifyTweetHeuristically({ ...tweet, fullText: "FYI", quotedText: fullText }).verdict).toBe("not_reset");
   });
 
   it("heuristic does not confirm reset questions", () => {
@@ -475,6 +491,6 @@ describe("classifier", () => {
       quotedText: null,
     });
 
-    expect(classification.verdict).toBe("uncertain");
+    expect(classification.verdict).toBe("not_reset");
   });
 });

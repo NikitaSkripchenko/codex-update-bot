@@ -1,3 +1,4 @@
+import { isSuccessfulReset } from "./types";
 import { isOpenRouterFallbackRationale } from "./classifier";
 import { classifyConfiguredTweet, getConfiguredClassifierKeyName, getConfiguredClassifierModel } from "./classification-provider";
 import { dispatchAlert, dispatchSubscriberAlertNow } from "./delivery-queue";
@@ -26,7 +27,7 @@ const formatDate = (value: string | null): string => {
 };
 
 const formatVerdict = (verdict: MonitorDecision["verdict"]): string =>
-  ({ reset_confirmed: "Reset confirmed", not_reset: "Not reset", uncertain: "Uncertain" })[verdict];
+  ({ reset_confirmed: "Reset confirmed", not_reset: "Not reset", banked_reset: "Banked reset" })[verdict];
 
 const formatDelivery = (decision: MonitorDecision): string => {
   if (decision.deliveryMode === "direct") {
@@ -81,7 +82,7 @@ const createReevaluatedDecision = (
 });
 
 const isResetTransition = (previous: MonitorDecision, next: Classification): boolean =>
-  previous.verdict !== "reset_confirmed" && next.verdict === "reset_confirmed";
+  !isSuccessfulReset(previous.verdict) && isSuccessfulReset(next.verdict);
 
 const isFreshDecision = (decision: MonitorDecision): boolean => {
   const publishedAt = new Date(decision.tweetCreatedAt).valueOf();
@@ -166,7 +167,7 @@ export const dashboardReevaluateResponse = async (request: Request, env: Env, de
   }
 
   if (replayConfirmed) {
-    if (latestDecision.verdict !== "reset_confirmed" || classification.verdict !== "reset_confirmed") {
+    if (!isSuccessfulReset(latestDecision.verdict) || !isSuccessfulReset(classification.verdict)) {
       return jsonResponse({ ok: false, error: "Only a confirmed reset decision can be replayed." }, { status: 409 });
     }
 
@@ -275,7 +276,7 @@ export const dashboardHtmlResponse = async (env: Env): Promise<Response> => {
     .healthy { color: var(--teal); } .error { color: var(--red); }
     .latest { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--blue); padding: clamp(20px, 4vw, 38px); } .latest.empty { border-left-color: var(--orange); }
     .latest-heading { align-items: center; display: flex; gap: 18px; justify-content: space-between; } .verdict, .table-verdict { border: 1px solid currentColor; color: var(--muted); display: inline-block; font-size: .76rem; font-weight: 800; padding: 5px 7px; text-transform: uppercase; white-space: nowrap; }
-    .reset_confirmed { color: var(--teal); } .uncertain { color: var(--orange); } .not_reset { color: var(--muted); }
+    .reset_confirmed, .banked_reset { color: var(--teal); } .not_reset { color: var(--muted); }
     .tweet { font-family: Arial, Helvetica, sans-serif; font-size: clamp(1.15rem, 2.2vw, 1.65rem); line-height: 1.3; margin: 28px 0 14px; max-width: 1000px; white-space: pre-wrap; } .rationale { border-left: 2px solid var(--line); color: #3f4f5e; padding-left: 14px; }
     .facts { border-top: 1px solid var(--line); display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); margin: 30px 0 22px; padding-top: 16px; } .facts div { min-width: 0; } .facts dt { color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; } .facts dd { margin: 5px 0 0; overflow-wrap: anywhere; }
     a { color: var(--blue); } button { background: var(--ink); border: 0; color: #fff; cursor: pointer; font: inherit; font-weight: 800; padding: 12px 15px; } button:hover { background: var(--blue); } button:disabled { background: #9caab3; cursor: not-allowed; } .table-action { font-size: .76rem; padding: 7px 9px; } .action-result { color: var(--muted); margin-top: 12px; min-height: 1.5em; } .action-result.error { color: var(--red); }
@@ -314,7 +315,7 @@ export const dashboardHtmlResponse = async (env: Env): Promise<Response> => {
       const buttons = document.querySelectorAll("button[data-reevaluate-tweet-id]");
       buttons.forEach((control) => control.disabled = true);
       result.classList.remove("error");
-      result.textContent = "Re-evaluating the selected cached tweet. Subscribers are notified only if it changes to reset confirmed.";
+      result.textContent = "Re-evaluating the selected cached tweet. Subscribers are notified only if it changes to a confirmed or banked reset.";
       try {
         const response = await fetch("/dashboard/re-evaluate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tweetId: button.dataset.reevaluateTweetId }) });
         const data = await response.json();
