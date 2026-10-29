@@ -10,7 +10,7 @@ export default {
     { id: "file://./evals/classifier-provider.ts", label: "production", config: { classifier: "production" } },
     { id: "file://./evals/classifier-provider.ts", label: "jev", config: { classifier: "jev" } },
   ],
-  tests: cases.map(([name, fullText, expected, quotedText, isReply]) => ({
+  tests: cases.map(([name, fullText, expected, quotedText, isReply, context]) => ({
     description: name,
     vars: {
       authorUsername: "sama",
@@ -21,6 +21,7 @@ export default {
       quotedCreatedAt: "",
       quotedUrl: "",
       url: "https://x.com/sama/status/1",
+      ...context,
     },
     assert: [{ type: "equals", value: expected }],
     metadata: { expected },
